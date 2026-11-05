@@ -11,9 +11,9 @@ TypeScript's plan lists only its differences. mbse-schemas is tested in mbse-sch
 | Notebook | Suite | Cases | Covers |
 |---|---|---|---|
 | `01_Package.ipynb` | PKG | 1 | Both packages carry one version, and the framework loads |
-| `02_Logical.ipynb` | LOG | 6 | The install's schemas, each valid, and run again writing nothing; a shape's one origin, and border and extent points of one shape each, as `unique` clauses the validator reports; a vector's one rotation per start and end; a child's one container, and adjacencies between siblings by rotation; compasses: a shape's and its origin's north, a border or extent point's turned by the vector from its origin, a chain of vectors turned in turn, modulo 360, negative and fractional rotations; undefined compasses refused: a shape without an origin, a point no vector precedes, or two do, a preceding vector without a rotation, a cycle |
+| `02_Logical.ipynb` | LOG | 7 | The install's schemas, each valid, and run again writing nothing, and the singleton `Logical.Diagrams`; ownership: a diagram by `Logical.Diagrams`, a shape by its diagram or its container, a point by its shape, each found by its key, a border point's path read back as JSON, a point or a shape without an owner refused; a shape's one origin and a point's one owner, as `unique` clauses the validator reports; a vector's one rotation per start and end; a container's children in order, and adjacencies between siblings by rotation; compasses: a shape's and its origin's north, a border or extent point's its vector's rotation, modulo 360, negative and fractional; undefined compasses refused: a shape without an origin, and its points, a point with no vector from its shape's origin, or two, and a vector without a rotation |
 
-Total: 7 cases.
+Total: 8 cases.
 
 ## Not testable yet
 

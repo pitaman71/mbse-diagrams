@@ -9,19 +9,21 @@
  * `"rows"` or `"columns"`, and holds `span` cells along the other; its extents, `rows` and `columns`, count the cells
  * along each axis its children occupy, and `inserted` counts the children it has placed. A `Container.OfCell` is owned
  * by its grid (`Container.Cells`), keyed by its `row` and `column`, each counted from 0, and holds its children in
- * order (`Container.Holds`), each with its `order`, its original insertion position: a shape is in one cell. A cell
- * that holds several is itself a container, which grows along its own axis, `grows`, its extents the cells its shapes
- * occupy.
+ * order (`Container.Holds`), each with its `order`, its original insertion position: a shape is in one cell. A cell is
+ * itself a container, oriented as its grid's container is, turned by the grid's `cell_rotation`, a
+ * `Logical.OfRotation`: the compass of each shape it holds is its container's, turned so. A cell that holds several
+ * grows along its grid's axis, `grows`, its extents the cells its shapes occupy.
  *
  * The layout is incremental: each function adjusts it to one change of the logical layout, within the transaction that
  * made the change, and leaves alone what that change does not touch. A grid is a sequence of cells, placed in order:
  * along a row, `span` cells, then the next row down, where it grows rows; down a column, then the next column right,
- * where it grows columns. `layout(shape, span, grows)` gives a container shape its grid and places the children it
- * already has, in order, then their adjacency specs; `added(child)` places a child its container has just gained in the
- * next cell; `removed(shape)` closes the gaps the children its container has just lost leave. `adjoined(from_shape,
- * to_shape)` moves `to_shape` beside `from_shape`, along the rotation of the adjacency spec just added between them,
- * quantized to the nearest quarter turn, where one change of the sequence can; `unjoined(to_shape)` reverts it to its
- * original insertion position, once a spec to it is removed, and applies those that remain.
+ * where it grows columns. `layout(shape, span, grows, cell_rotation)` gives a container shape its grid and places the
+ * children it already has, in order, then their adjacency specs; `rotate(shape, degrees)` turns its cells;
+ * `added(child)` places a child its container has just gained in the next cell; `removed(shape)` closes the gaps the
+ * children its container has just lost leave. `adjoined(from_shape, to_shape)` moves `to_shape` beside `from_shape`,
+ * along the rotation of the adjacency spec just added between them, quantized to the nearest quarter turn, where one
+ * change of the sequence can; `unjoined(to_shape)` reverts it to its original insertion position, once a spec to it is
+ * removed, and applies those that remain.
  */
 
 import { Errors, Proxies } from "@mbse/schemas/Framework";
@@ -44,10 +46,11 @@ export function install(txn: any): any {
   const S = txn.Schemas;
   return txn.uid("mbse.Diagrams.Container/1").mutations([(mu: any) => mu.upsert((u: any) => u.exists([(p: any) => p
     .symbols({
-      OfShape: S.OfObject, OfGrid: S.OfObject, Layout: S.OfRelation, OfCell: S.OfObject,
-      Cells: S.OfRelation, Holds: S.OfRelation,
+      OfShape: S.OfObject, OfRotation: S.OfObject, OfGrid: S.OfObject, Layout: S.OfRelation,
+      OfCell: S.OfObject, Cells: S.OfRelation, Holds: S.OfRelation,
     })
     .spec([
+      (_: any) => _.OfRotation.name("Logical.OfRotation"), // found by its name
       (_: any) => _.Layout.name("Container.Layout").links([
         (t: any) => t.name("shape"),
         (t: any) => t.name("grid"),
@@ -58,6 +61,7 @@ export function install(txn: any): any {
         rows: S.OfInt, // the extents: the cells along each axis the children occupy
         columns: S.OfInt,
         inserted: S.OfInt, // the children placed so far: the next one's order
+        cell_rotation: _.OfRotation, // each cell's, from the container's compass
       }).adjacencies([
         (t: any) => t.name("shape").relation([_.Layout]).me("grid").owner(true),
         (t: any) => t.name("cells").relation([_.Cells]).me("grid"),
@@ -67,7 +71,7 @@ export function install(txn: any): any {
         (t: any) => t.name("cell"),
       ]).properties({ row: S.OfInt, column: S.OfInt }).uniques([["grid", "row", "column"], ["cell"]]),
       (_: any) => _.OfCell.name("Container.OfCell").ref(true).properties({
-        grows: S.OfStr, // a cell of several shapes is a container: its axis, and its extents
+        grows: S.OfStr, // a cell of several shapes: its grid's axis, and its extents
         rows: S.OfInt,
         columns: S.OfInt,
       }).adjacencies([
@@ -85,20 +89,28 @@ export function install(txn: any): any {
     ])]))]);
 }
 
-/** Gives the container `shape` a grid of `span` cells along the axis it does not grow along, `grows`, and places the
- * children it already has in it, in order, then their adjacency specs, in order; returns the grid. Within a
- * transaction. */
-export function layout(shape: any, span: bigint, grows = "rows"): any {
+/** Gives the container `shape` a grid of `span` cells along the axis it does not grow along, `grows`, each cell turned
+ * by `cell_rotation` degrees from the container's compass, and places the children it already has in it, in order,
+ * then their adjacency specs, in order; returns the grid. Within a transaction. */
+export function layout(shape: any, span: bigint, grows = "rows", cell_rotation = 0): any {
   if (!AXES.includes(grows)) throw new ValueError(`a grid grows rows or columns, not ${repr(grows)}`);
   if (typeof span !== "bigint" || span < 1n) throw new ValueError(`a grid's span is a positive int, not ${repr(span)}`);
   if ([...shape.grid].length > 0) throw new ValueError("a shape has one grid");
   (Proxies.store_of(shape) as any).Logical.OfShape(shape, (s: any) => s.grid((a: any) => a.insert((e: any) => e.grid(
-    (g: any) => g.grows(grows).span(span).rows(0n).columns(0n).inserted(0n)))));
+    (g: any) => g.grows(grows).span(span).rows(0n).columns(0n).inserted(0n).cell_rotation(
+      (r: any) => r.degrees(cell_rotation))))));
   for (const entry of shape.children) added(entry.child);
   for (const entry of shape.children) {
     for (const spec of entry.child.adjacent_to) adjoined(entry.child, spec.to_shape);
   }
   return gridOf(shape);
+}
+
+/** Turns the cells of the container `shape`'s grid by `degrees` from its compass, and with them the compasses of the
+ * shapes they hold. Within a transaction. */
+export function rotate(shape: any, degrees: number): void {
+  const grid = gridOf(shape);
+  (Proxies.store_of(grid) as any).Container.OfGrid(grid, (g: any) => g.cell_rotation((r: any) => r.degrees(degrees)));
 }
 
 /** Places `child`, which its container has just gained, in the next cell of its container's grid. Within the
@@ -121,8 +133,9 @@ export function removed(shape: any): void {
 
 /** Moves `to_shape` beside `from_shape`, along the rotation of the adjacency spec between them, quantized to the
  * nearest quarter turn: into the cell on that side where it already holds a shape a spec from `from_shape` along that
- * side placed, which it then shares, or else into a cell of its own there, where one change of the sequence makes
- * room. Returns whether it did; a spec the grid cannot meet is ignored. Within the transaction that added the spec. */
+ * side placed, which it then shares, growing along its grid's axis, or else into a cell of its own there, where one
+ * change of the sequence makes room. Returns whether it did; a spec the grid cannot meet is ignored. Within the
+ * transaction that added the spec. */
 export function adjoined(from_shape: any, to_shape: any): boolean {
   const specs = [...from_shape.adjacent_to].filter((e: any) => e.to_shape === to_shape);
   const side = quarter(specs[specs.length - 1].rotation.degrees.get());
@@ -137,7 +150,7 @@ export function adjoined(from_shape: any, to_shape: any): boolean {
   if (beside >= 0n && beside < length && placed(grid, from_shape, sequence[Number(beside)] as Cell, side, i, beside)) {
     const target = sequence[Number(beside)] as Cell;
     target.held.push(held);
-    target.grows = side === "east" || side === "west" ? "rows" : "columns";
+    target.grows = grows; // a cell is oriented as its container is
     arrange(grid, sequence);
     return true;
   }

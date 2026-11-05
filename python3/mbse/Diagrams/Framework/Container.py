@@ -8,18 +8,21 @@ shape's layout, owned by it (`Container.Layout`), keyless: one per shape. It gro
 `"columns"`, and holds `span` cells along the other; its extents, `rows` and `columns`, count the cells along each axis
 its children occupy, and `inserted` counts the children it has placed. A `Container.OfCell` is owned by its grid
 (`Container.Cells`), keyed by its `row` and `column`, each counted from 0, and holds its children in order
-(`Container.Holds`), each with its `order`, its original insertion position: a shape is in one cell. A cell that holds
-several is itself a container, which grows along its own axis, `grows`, its extents the cells its shapes occupy.
+(`Container.Holds`), each with its `order`, its original insertion position: a shape is in one cell. A cell is itself a
+container, oriented as its grid's container is, turned by the grid's `cell_rotation`, a `Logical.OfRotation`: the
+compass of each shape it holds is its container's, turned so. A cell that holds several grows along its grid's axis,
+`grows`, its extents the cells its shapes occupy.
 
 The layout is incremental: each function adjusts it to one change of the logical layout, within the transaction that
-made the change, and leaves alone what that change does not touch. A grid is a sequence of cells, placed in order:
-along a row, `span` cells, then the next row down, where it grows rows; down a column, then the next column right, where
-it grows columns. `layout(shape, span, grows)` gives a container shape its grid and places the children it already has,
-in order, then their adjacency specs; `added(child)` places a child its container has just gained in the next cell;
-`removed(shape)` closes the gaps the children its container has just lost leave. `adjoined(from_shape, to_shape)` moves
-`to_shape` beside `from_shape`, along the rotation of the adjacency spec just added between them, quantized to the
-nearest quarter turn, where one change of the sequence can; `unjoined(to_shape)` reverts it to its original insertion
-position, once a spec to it is removed, and applies those that remain.
+made the change, and leaves alone what that change does not touch. A grid is a sequence of cells, placed in order: along
+a row, `span` cells, then the next row down, where it grows rows; down a column, then the next column right, where it
+grows columns. `layout(shape, span, grows, cell_rotation)` gives a container shape its grid and places the children it
+already has, in order, then their adjacency specs; `rotate(shape, degrees)` turns its cells; `added(child)` places a
+child its container has just gained in the next cell; `removed(shape)` closes the gaps the children its container has
+just lost leave. `adjoined(from_shape, to_shape)` moves `to_shape` beside `from_shape`, along the rotation of the
+adjacency spec just added between them, quantized to the nearest quarter turn, where one change of the sequence can;
+`unjoined(to_shape)` reverts it to its original insertion position, once a spec to it is removed, and applies those that
+remain.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from typing import Any
 
 from mbse.Schemas.Framework import Proxies
 
-__all__ = ["install", "layout", "added", "removed", "adjoined", "unjoined", "cell_of", "quarter"]
+__all__ = ["install", "layout", "rotate", "added", "removed", "adjoined", "unjoined", "cell_of", "quarter"]
 
 AXES = ("rows", "columns")
 QUARTERS = ("north", "east", "south", "west")
@@ -44,10 +47,11 @@ def install(txn: Any) -> Any:
     S = txn.Schemas
     return txn.uid("mbse.Diagrams.Container/1").mutations([lambda mu: mu.upsert(lambda u: u.exists([lambda p: p
         .symbols({
-            "OfShape": S.OfObject, "OfGrid": S.OfObject, "Layout": S.OfRelation, "OfCell": S.OfObject,
-            "Cells": S.OfRelation, "Holds": S.OfRelation,
+            "OfShape": S.OfObject, "OfRotation": S.OfObject, "OfGrid": S.OfObject, "Layout": S.OfRelation,
+            "OfCell": S.OfObject, "Cells": S.OfRelation, "Holds": S.OfRelation,
         })
         .spec([
+            lambda _: _.OfRotation.name("Logical.OfRotation"),  # found by its name
             lambda _: _.Layout.name("Container.Layout").links([
                 lambda t: t.name("shape"),
                 lambda t: t.name("grid"),
@@ -58,6 +62,7 @@ def install(txn: Any) -> Any:
                 "rows": S.OfInt,  # the extents: the cells along each axis the children occupy
                 "columns": S.OfInt,
                 "inserted": S.OfInt,  # the children placed so far: the next one's order
+                "cell_rotation": _.OfRotation,  # each cell's, from the container's compass
             }).adjacencies([
                 lambda t: t.name("shape").relation([_.Layout]).me("grid").owner(True),
                 lambda t: t.name("cells").relation([_.Cells]).me("grid"),
@@ -67,7 +72,7 @@ def install(txn: Any) -> Any:
                 lambda t: t.name("cell"),
             ]).properties({"row": S.OfInt, "column": S.OfInt}).uniques([["grid", "row", "column"], ["cell"]]),
             lambda _: _.OfCell.name("Container.OfCell").ref(True).properties({
-                "grows": S.OfStr,  # a cell of several shapes is a container: its axis, and its extents
+                "grows": S.OfStr,  # a cell of several shapes: its grid's axis, and its extents
                 "rows": S.OfInt,
                 "columns": S.OfInt,
             }).adjacencies([
@@ -85,10 +90,10 @@ def install(txn: Any) -> Any:
         ])]))])
 
 
-def layout(shape: Any, span: int, grows: str = "rows") -> Any:
-    """Gives the container `shape` a grid of `span` cells along the axis it does not grow along, `grows`, and places the
-    children it already has in it, in order, then their adjacency specs, in order; returns the grid. Within a
-    transaction."""
+def layout(shape: Any, span: int, grows: str = "rows", cell_rotation: float = 0.0) -> Any:
+    """Gives the container `shape` a grid of `span` cells along the axis it does not grow along, `grows`, each cell
+    turned by `cell_rotation` degrees from the container's compass, and places the children it already has in it, in
+    order, then their adjacency specs, in order; returns the grid. Within a transaction."""
     if grows not in AXES:
         raise ValueError(f"a grid grows rows or columns, not {grows!r}")
     if not isinstance(span, int) or isinstance(span, bool) or span < 1:
@@ -96,13 +101,21 @@ def layout(shape: Any, span: int, grows: str = "rows") -> Any:
     if list(shape.grid):
         raise ValueError("a shape has one grid")
     Proxies.store_of(shape).Logical.OfShape(shape, lambda s: s.grid(lambda a: a.insert(lambda e: e.grid(
-        lambda g: g.grows(grows).span(span).rows(0).columns(0).inserted(0)))))
+        lambda g: g.grows(grows).span(span).rows(0).columns(0).inserted(0).cell_rotation(
+            lambda r: r.degrees(cell_rotation))))))
     for entry in shape.children:
         added(entry.child)
     for entry in shape.children:
         for spec in entry.child.adjacent_to:
             adjoined(entry.child, spec.to_shape)
     return _grid(shape)
+
+
+def rotate(shape: Any, degrees: float) -> None:
+    """Turns the cells of the container `shape`'s grid by `degrees` from its compass, and with them the compasses of the
+    shapes they hold. Within a transaction."""
+    grid = _grid(shape)
+    Proxies.store_of(grid).Container.OfGrid(grid, lambda g: g.cell_rotation(lambda r: r.degrees(degrees)))
 
 
 def added(child: Any) -> None:
@@ -126,8 +139,9 @@ def removed(shape: Any) -> None:
 def adjoined(from_shape: Any, to_shape: Any) -> bool:
     """Moves `to_shape` beside `from_shape`, along the rotation of the adjacency spec between them, quantized to the
     nearest quarter turn: into the cell on that side where it already holds a shape a spec from `from_shape` along that
-    side placed, which it then shares, or else into a cell of its own there, where one change of the sequence makes
-    room. Returns whether it did; a spec the grid cannot meet is ignored. Within the transaction that added the spec."""
+    side placed, which it then shares, growing along its grid's axis, or else into a cell of its own there, where one
+    change of the sequence makes room. Returns whether it did; a spec the grid cannot meet is ignored. Within the
+    transaction that added the spec."""
     spec = [e for e in from_shape.adjacent_to if e.to_shape is to_shape][-1]
     side = quarter(spec.rotation.degrees.get())
     grid = _grid_of(from_shape)
@@ -138,7 +152,7 @@ def adjoined(from_shape: Any, to_shape: Any) -> bool:
     beside = {"next": i + 1, "prev": i - 1, "down": i + span, "up": i - span}[step]
     if 0 <= beside < len(sequence) and _placed(grid, from_shape, sequence[beside], side, i, beside):
         sequence[beside].held.append(held)
-        sequence[beside].grows = "rows" if side in ("east", "west") else "columns"
+        sequence[beside].grows = grows  # a cell is oriented as its container is
         _arrange(grid, sequence)
         return True
     at = {"next": i + 1, "prev": i, "down": i + span, "up": i + 1 - span}[step]

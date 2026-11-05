@@ -12,8 +12,9 @@ each connected to the origin by a vector. A `Logical.Vector` runs from a `start`
 
 `compass(x)` resolves the logical compass of a point or a shape, as degrees clockwise from the viewport's north, by the
 rules of [the diagrams proposal](mbse:mbse-basis/proposals/DIAGRAMS.md): a shape's is its origin's; an origin's its
-enclosing cell's, its container's, and so on to the viewport, none of which rotates, so north; a border or extent
-point's its origin's, turned by the rotation of the vector from its origin.
+enclosing cell's, which is its container's turned by the rotation of its container's cells, where `Container` gives it
+a cell, and so on to the viewport, whose compass is north; a border or extent point's its origin's, turned by the
+rotation of the vector from its origin.
 """
 
 from __future__ import annotations
@@ -104,9 +105,10 @@ def compass(x: Any) -> float:
     """
     if x.as_schema().name == "Logical.OfShape":
         _origin(x)
-        return 0.0  # a shape's compass is its origin's
-    if list(x.origin_of):
-        return 0.0  # no container, cell or shape rotates: an origin's compass is the viewport's
+        return _enclosing(x)  # a shape's compass is its origin's
+    origins = [e.shape for e in x.origin_of]
+    if origins:
+        return _enclosing(origins[0])
     shape = [e.shape for e in [*x.border_of, *x.extent_of]][0]
     origin = _origin(shape)
     vectors = [e for e in x.incoming if e.start is origin]
@@ -115,7 +117,22 @@ def compass(x: Any) -> float:
     degrees = vectors[0].rotation.degrees.get()
     if degrees is None:
         raise ValueError("a point whose vector from its shape's origin has no rotation has no compass")
-    return degrees % 360.0
+    return (_enclosing(shape) + degrees) % 360.0
+
+
+def _enclosing(shape: Any) -> float:
+    """The compass of the cell that encloses `shape`'s origin: its container's, turned by the rotation of its
+    container's cells, where container layout gives it a cell, and so on to the viewport, whose compass is north."""
+    turn = 0.0
+    while True:
+        if "cell" in shape.as_schema().adjacencies:
+            for entry in shape.cell:
+                ((place,),) = [list(entry.cell.grid)]
+                turn += place.grid.cell_rotation.degrees.get()
+        containers = [e.container for e in shape.container]
+        if not containers:
+            return turn % 360.0
+        shape = containers[0]
 
 
 def _origin(shape: Any) -> Any:

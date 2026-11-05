@@ -13,8 +13,9 @@
  *
  * `compass(x)` resolves the logical compass of a point or a shape, as degrees clockwise from the viewport's north, by
  * the rules of [the diagrams proposal](mbse:mbse-basis/proposals/DIAGRAMS.md): a shape's is its origin's; an origin's
- * its enclosing cell's, its container's, and so on to the viewport, none of which rotates, so north; a border or extent
- * point's its origin's, turned by the rotation of the vector from its origin.
+ * its enclosing cell's, which is its container's turned by the rotation of its container's cells, where `Container`
+ * gives it a cell, and so on to the viewport, whose compass is north; a border or extent point's its origin's, turned
+ * by the rotation of the vector from its origin.
  */
 
 import { Errors } from "@mbse/schemas/Framework";
@@ -103,10 +104,10 @@ export function install(txn: any): any {
 export function compass(x: any): number {
   if (x.as_schema().name === "Logical.OfShape") {
     originOf(x);
-    return 0; // a shape's compass is its origin's
+    return enclosing(x); // a shape's compass is its origin's
   }
-  // no container, cell or shape rotates: an origin's compass is the viewport's
-  if ([...x.origin_of].length > 0) return 0;
+  const origins = [...x.origin_of].map((e: any) => e.shape);
+  if (origins.length > 0) return enclosing(origins[0]);
   const shape = [...x.border_of, ...x.extent_of].map((e: any) => e.shape)[0];
   const origin = originOf(shape);
   const vectors = [...x.incoming].filter((e: any) => e.start === origin);
@@ -117,7 +118,24 @@ export function compass(x: any): number {
   if (degrees === null) {
     throw new ValueError("a point whose vector from its shape's origin has no rotation has no compass");
   }
-  return ((degrees % 360) + 360) % 360;
+  return (((enclosing(shape) + degrees) % 360) + 360) % 360;
+}
+
+/** The compass of the cell that encloses `shape`'s origin: its container's, turned by the rotation of its container's
+ * cells, where container layout gives it a cell, and so on to the viewport, whose compass is north. */
+function enclosing(shape: any): number {
+  let turn = 0;
+  for (;;) {
+    if (shape.as_schema().adjacencies.has("cell")) {
+      for (const entry of shape.cell) {
+        const [place] = [...entry.cell.grid];
+        turn += place.grid.cell_rotation.degrees.get();
+      }
+    }
+    const containers = [...shape.container].map((e: any) => e.container);
+    if (containers.length === 0) return ((turn % 360) + 360) % 360;
+    shape = containers[0];
+  }
 }
 
 function originOf(shape: any): any {

@@ -1,6 +1,8 @@
 """The layouts of a diagram: logical, container and physical, and the incremental algorithm over them.
 
-Empty until mbse-basis [CAP-237: logical layout schemas](mbse:mbse-basis/docs/capabilities/README.md#CAP-237) lands.
+`Logical` is the logical layout's schemas ([CAP-237: logical layout schemas](mbse:mbse-basis/docs/capabilities/README.md#CAP-237)).
 """
 
-__all__: list[str] = []
+from . import Logical
+
+__all__ = ["Logical"]

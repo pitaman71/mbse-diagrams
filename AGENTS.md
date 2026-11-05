@@ -4,7 +4,8 @@ mbse-diagrams lays out diagrams of [mbse-schemas](https://github.com/pitaman71/m
 logical layout of points, vectors and shapes, a container layout of cells and a physical layout of coordinates, each a
 deterministic function of a mutation sequence. Two implementations exist, `python3/` and `typescript5/`: equivalent
 for the schemas and container layout, with physical layout's components in TypeScript only. Built so far: the logical
-layout's schemas (`Logical`), and the container layout's grids, filled in order (`Container`).
+layout's schemas (`Logical`), and the container layout's grids, filled in order and rearranged by
+adjacency specs (`Container`).
 
 ## Start here
 

@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Container Trace</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #d9d9d3;
+  --cell: #ffffff; --slot: #eeeeea; --accent: #2f6fd6; --changed: #fff2c2; --changed-line: #d9a400;
+  --kept: #2f6fd6; --ignored: #c8372d; --error: #c8372d; --ok: #2b8a3e;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --panel: #1f1f1d; --ink: #ececea; --muted: #9a9a94; --line: #3a3a37;
+    --cell: #262624; --slot: #222220; --accent: #6ea2ff; --changed: #4a3d10; --changed-line: #e0b62e;
+    --kept: #6ea2ff; --ignored: #ff7b70; --error: #ff7b70; --ok: #5fcf78;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161615; --panel: #1f1f1d; --ink: #ececea; --muted: #9a9a94; --line: #3a3a37;
+  --cell: #262624; --slot: #222220; --accent: #6ea2ff; --changed: #4a3d10; --changed-line: #e0b62e;
+  --kept: #6ea2ff; --ignored: #ff7b70; --error: #ff7b70; --ok: #5fcf78;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, sans-serif; }
+.app { display: grid; grid-template-columns: 300px 1fr; min-height: 100vh; }
+nav { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; max-height: 100vh; position: sticky; top: 0; }
+nav h1 { font-size: 15px; margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+nav .notebook { padding: 10px 16px 4px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+nav button { display: block; width: 100%; text-align: left; border: 0; background: none; color: inherit; font: inherit;
+  padding: 6px 16px; cursor: pointer; }
+nav button:hover { background: var(--slot); }
+nav button.on { background: var(--accent); color: #fff; }
+nav button .n { float: right; opacity: .7; font-variant-numeric: tabular-nums; }
+main { padding: 20px 24px; min-width: 0; }
+.head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
+.head h2 { margin: 0; font-size: 18px; }
+.head .case { color: var(--muted); }
+.controls { display: flex; gap: 8px; align-items: center; margin: 14px 0; flex-wrap: wrap; }
+.controls button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); background: var(--panel); color: inherit;
+  border-radius: 6px; cursor: pointer; }
+.controls button:disabled { opacity: .4; cursor: default; }
+.controls .pos { color: var(--muted); font-variant-numeric: tabular-nums; }
+.call { font: 15px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 10px 12px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; }
+.badge { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 10px; font-size: 12px; color: #fff; }
+.badge.true { background: var(--ok); } .badge.false { background: var(--ignored); } .badge.error { background: var(--error); }
+.error { color: var(--error); margin-top: 6px; font: 13px ui-monospace, monospace; }
+.grids { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 16px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
+.panel h3 { margin: 0 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.panel .meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.panel svg { display: block; max-width: 100%; height: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; }
+tr.ignored td { color: var(--ignored); }
+.empty { color: var(--muted); font-style: italic; }
+.keys { color: var(--muted); font-size: 12px; margin-top: 20px; }
+@media (max-width: 720px) {
+  .app { grid-template-columns: 1fr; }
+  nav { position: static; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav id="nav"><h1>Container trace</h1></nav>
+  <main>
+    <div class="head"><h2 id="title"></h2><span class="case" id="case"></span></div>
+    <div class="controls">
+      <button id="prev" title="Previous step (←)">← Step</button>
+      <button id="next" title="Next step (→)">Step →</button>
+      <span class="pos" id="pos"></span>
+    </div>
+    <div class="call" id="call"></div>
+    <div class="error" id="error"></div>
+    <div class="grids">
+      <div class="panel"><h3>Before</h3><div class="meta" id="before-meta"></div><div id="before"></div></div>
+      <div class="panel"><h3>After</h3><div class="meta" id="after-meta"></div><div id="after"></div></div>
+    </div>
+    <div class="panel" style="margin-top:16px"><h3>Rules, in the order they reached the grid</h3><div id="rules"></div></div>
+    <p class="keys">← → step through the calls of a case, and on into the next · ↑ ↓ previous and next case ·
+      a solid arrow is a rule that holds; a dashed one points where an ignored rule wants its shape · the small number
+      beside a shape is its original insertion position · a highlighted cell changed in this step</p>
+  </main>
+</div>
+<script>
+const TRACE = /*TRACE*/null;
+const cases = [];
+for (const nb of TRACE.notebooks) for (const c of nb.cases) if (c.steps.length) cases.push({ nb, c });
+let at = { k: 0, s: 0 };
+
+const nav = document.getElementById("nav");
+let last = null;
+cases.forEach(({ nb, c }, k) => {
+  if (nb !== last) {
+    const d = document.createElement("div");
+    d.className = "notebook"; d.textContent = nb.title;
+    nav.appendChild(d); last = nb;
+  }
+  const b = document.createElement("button");
+  b.innerHTML = `${c.id} <span class="n">${c.steps.length}</span>`;
+  b.title = c.title;
+  b.onclick = () => go(k, 0);
+  b.dataset.k = k;
+  nav.appendChild(b);
+});
+
+const W = 104, H = 62, G = 14, P = 52; // room around the grid for an ignored rule's stub
+const esc = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
+const key = (cell) => cell.shapes.map((s) => s.name).join("|") + "/" + cell.grows;
+
+function grid(state, other, highlight) {
+  if (!state) return '<p class="empty">no grid</p>';
+  const rows = Math.max(state.rows, ...state.cells.map((c) => c.row + 1), 1);
+  const cols = Math.max(state.columns, ...state.cells.map((c) => c.column + 1), 1);
+  const w = P * 2 + cols * W + (cols - 1) * G, h = P * 2 + rows * H + (rows - 1) * G;
+  const x = (c) => P + c * (W + G), y = (r) => P + r * (H + G);
+  const before = new Map((other ? other.cells : []).map((c) => [`${c.row},${c.column}`, key(c)]));
+  const where = new Map();
+  let svg = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="grid of ${state.container}">`;
+  svg += `<defs><marker id="arrow-kept" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--kept)"/></marker>`;
+  svg += `<marker id="arrow-ignored" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ignored)"/></marker></defs>`;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    svg += `<rect x="${x(c)}" y="${y(r)}" width="${W}" height="${H}" rx="6" fill="var(--slot)"/>`;
+  }
+  for (const cell of state.cells) {
+    const changed = highlight && before.get(`${cell.row},${cell.column}`) !== key(cell);
+    svg += `<rect x="${x(cell.column)}" y="${y(cell.row)}" width="${W}" height="${H}" rx="6" fill="${changed ? "var(--changed)" : "var(--cell)"}" stroke="${changed ? "var(--changed-line)" : "var(--line)"}" stroke-width="${changed ? 2 : 1}"/>`;
+    const n = cell.shapes.length;
+    cell.shapes.forEach((s, i) => {
+      const down = cell.grows === "rows" || n === 1;
+      const cx = x(cell.column) + (down ? W / 2 : W * (i + 0.5) / n);
+      const cy = y(cell.row) + (down ? 10 + (H - 12) * (i + 0.5) / n : H / 2 + 4); // below the cell's label
+      where.set(s.name, [cx, cy]);
+      svg += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="var(--ink)" font-size="${n > 2 ? 12 : 15}" font-weight="600">${esc(s.name)}<tspan fill="var(--muted)" font-size="10" font-weight="400"> ${s.order}</tspan></text>`;
+    });
+    svg += `<text x="${x(cell.column) + 5}" y="${y(cell.row) + 11}" fill="var(--muted)" font-size="9">${cell.row},${cell.column}${n > 1 ? " · " + cell.grows : ""}</text>`;
+  }
+  const SIDES = { north: [0, -1], east: [1, 0], south: [0, 1], west: [-1, 0] };
+  const stubs = new Map();
+  for (const rule of state.rules) {
+    const a = where.get(rule.from), b = where.get(rule.to);
+    if (!a || !b) continue;
+    if (rule.ignored) { // where the rule wants its shape, not where it is
+      const [ux, uy] = SIDES[rule.side];
+      const n = stubs.get(rule.from + rule.side) || 0;
+      stubs.set(rule.from + rule.side, n + 1);
+      const off = (n % 2 ? -1 : 1) * Math.ceil(n / 2) * 9;
+      const [sx, sy] = [a[0] + ux * 16 - uy * off, a[1] + uy * 16 + ux * off];
+      const reach = ux ? W / 2 + G / 2 : H / 2 + G / 2;
+      const [ex, ey] = [sx + ux * reach, sy + uy * reach];
+      svg += `<line x1="${sx}" y1="${sy}" x2="${ex}" y2="${ey}" stroke="var(--ignored)" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#arrow-ignored)"><title>${esc(rule.from)} → ${esc(rule.to)}: ${rule.side}, ignored</title></line>`;
+      svg += `<text x="${ex + ux * 8 + (ux ? 0 : 6)}" y="${ey + uy * 10 + (uy ? 0 : -4)}" text-anchor="${ux > 0 ? "start" : ux < 0 ? "end" : "start"}" fill="var(--ignored)" font-size="11" font-weight="600">${esc(rule.to)}</text>`;
+      continue;
+    }
+    const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1;
+    const t = 16;
+    const [x1, y1, x2, y2] = [a[0] + dx / len * t, a[1] + dy / len * t, b[0] - dx / len * t, b[1] - dy / len * t];
+    svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--kept)" stroke-width="2" marker-end="url(#arrow-kept)"><title>${esc(rule.from)} → ${esc(rule.to)}: ${rule.side}</title></line>`;
+  }
+  return svg + "</svg>";
+}
+
+function meta(state) {
+  if (!state) return "";
+  return `${esc(state.container)} · grows ${state.grows}, span ${state.span} · ${state.rows} × ${state.columns} · ` +
+    `${state.inserted} inserted · cells turned ${state.cell_rotation}°`;
+}
+
+function rules(state) {
+  if (!state || !state.rules.length) return '<p class="empty">none</p>';
+  return "<table><tr><th>#</th><th>from</th><th>to</th><th>degrees</th><th>side</th><th></th></tr>" +
+    state.rules.map((r, i) => `<tr class="${r.ignored ? "ignored" : ""}"><td>${i + 1}</td><td>${esc(r.from)}</td>` +
+      `<td>${esc(r.to)}</td><td>${r.degrees}</td><td>${r.side}</td><td>${r.ignored ? "ignored" : "holds"}</td></tr>`).join("") +
+    "</table>";
+}
+
+function show() {
+  const { nb, c } = cases[at.k], step = c.steps[at.s];
+  document.getElementById("title").textContent = nb.title;
+  document.getElementById("case").textContent = `${c.id} · ${c.title}`;
+  document.getElementById("pos").textContent = `step ${at.s + 1} of ${c.steps.length}`;
+  const badge = step.error ? '<span class="badge error">raised</span>'
+    : step.result === null || step.result === undefined ? "" : `<span class="badge ${step.result}">${step.result ? "held" : "ignored"}</span>`;
+  document.getElementById("call").innerHTML = esc(step.call) + badge;
+  document.getElementById("error").textContent = step.error || "";
+  document.getElementById("before").innerHTML = grid(step.before, null, false);
+  document.getElementById("after").innerHTML = grid(step.after, step.before, true);
+  document.getElementById("before-meta").innerHTML = meta(step.before);
+  document.getElementById("after-meta").innerHTML = meta(step.after);
+  document.getElementById("rules").innerHTML = rules(step.after);
+  document.getElementById("prev").disabled = at.k === 0 && at.s === 0;
+  document.getElementById("next").disabled = at.k === cases.length - 1 && at.s === c.steps.length - 1;
+  for (const b of nav.querySelectorAll("button")) b.classList.toggle("on", +b.dataset.k === at.k);
+  try { localStorage.setItem("container-trace", JSON.stringify(at)); } catch (e) { /* storage unavailable */ }
+}
+
+function go(k, s) { at = { k, s }; show(); nav.querySelector(`button[data-k="${k}"]`).scrollIntoView({ block: "nearest" }); }
+function step(d) {
+  let { k, s } = at;
+  s += d;
+  if (s < 0) { if (k === 0) return; k -= 1; s = cases[k].c.steps.length - 1; }
+  if (s >= cases[k].c.steps.length) { if (k === cases.length - 1) return; k += 1; s = 0; }
+  go(k, s);
+}
+document.getElementById("prev").onclick = () => step(-1);
+document.getElementById("next").onclick = () => step(1);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowRight") { step(1); e.preventDefault(); }
+  if (e.key === "ArrowLeft") { step(-1); e.preventDefault(); }
+  if (e.key === "ArrowDown" && at.k < cases.length - 1) { go(at.k + 1, 0); e.preventDefault(); }
+  if (e.key === "ArrowUp" && at.k > 0) { go(at.k - 1, 0); e.preventDefault(); }
+});
+try {
+  const saved = JSON.parse(localStorage.getItem("container-trace"));
+  if (saved && cases[saved.k] && cases[saved.k].c.steps[saved.s]) at = saved;
+} catch (e) { /* storage unavailable */ }
+show();
+</script>
+</body>
+</html>

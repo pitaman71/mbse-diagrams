@@ -13,9 +13,10 @@ a *logical layout* of points, vectors and shapes, without coordinates; a *contai
 shapes, without coordinates of any kind; and a *physical layout* that gives every point its coordinates. One incremental
 algorithm keeps them consistent, one mutation at a time.
 
-Built so far: the logical layout's schemas, `Logical`, and the compass of a point or a shape; and the container
-layout's grids, `Container`, which place a container's children in order and move them beside
-each other by adjacency specs, one change at a time. The design is mbse-basis
+Built so far: the logical layout's schemas, `Logical`, and the compass of a point or a shape; and the container layout's
+grids, `Container`, which place a container's children in order and move them beside each other by adjacency specs,
+ignoring the later of two that conflict until it can be met, one change at a time.
+The design is mbse-basis
 [FEA-056: fungible diagramming keeps agents and humans in the loop](https://github.com/pitaman71/mbse-basis/blob/main/docs/features/FEA-056.md)
 and [the diagrams proposal](https://github.com/pitaman71/mbse-basis/blob/main/proposals/DIAGRAMS.md); the capabilities, in build order, are
 [INI-040: diagrams framework](https://github.com/pitaman71/mbse-basis/blob/main/proposals/PRIORITIES.md#ini-040--diagrams-framework)'s.

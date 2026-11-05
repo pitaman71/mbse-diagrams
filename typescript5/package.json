@@ -1,0 +1,30 @@
+{
+  "name": "@mbse/diagrams",
+  "version": "0.1.0",
+  "description": "Diagrams of mbse-schemas data, laid out incrementally: logical, container and physical layouts, each a deterministic function of a mutation sequence (TypeScript implementation)",
+  "keywords": ["diagrams", "layout", "incremental layout", "visualization", "mbse", "sysml"],
+  "type": "module",
+  "private": true,
+  "exports": {
+    "./Framework": "./src/Framework/index.ts",
+    "./Framework/*": "./src/Framework/*.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "postinstall": "python3 ../../mbse-basis/scripts/polyrepo.py check && npm --prefix ../../mbse-schemas/typescript5 install --no-audit --no-fund",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx tests/run-notebooks.ts --typecheck",
+    "coverage": "c8 --check-coverage --100 tsx tests/run-notebooks.ts --typecheck"
+  },
+  "dependencies": {
+    "@mbse/schemas": "file:../../mbse-schemas/typescript5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "c8": "^11.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

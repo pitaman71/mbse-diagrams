@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mbse-diagrams"
+version = "0.1.0"
+description = "Diagrams of mbse-schemas data, laid out incrementally: logical, container and physical layouts, each a deterministic function of a mutation sequence"
+keywords = ["diagrams", "layout", "incremental layout", "visualization", "mbse", "sysml"]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["mbse-schemas>=0.26.9,<0.27"]
+
+[tool.setuptools.packages.find]
+include = ["mbse*"]
+namespaces = true
+
+[dependency-groups]
+dev = [
+    "coverage[toml]>=7.10",
+    "ipykernel>=7.3.0",
+    "nbformat>=5.11.1",
+    "nbmake>=1.5.5",
+    "pytest>=9.1.1",
+]
+
+[tool.uv.sources]
+mbse-schemas = { path = "../../mbse-schemas/python3", editable = true }  # the sibling checkout: ../mbse-basis/scripts/polyrepo.py
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--nbmake"
+
+[tool.coverage.run]
+source = ["mbse.Diagrams.Framework"]
+branch = true
+parallel = true
+patch = ["subprocess"]
+sigterm = true  # a notebook kernel stopped by SIGTERM at shutdown saves its data
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 100

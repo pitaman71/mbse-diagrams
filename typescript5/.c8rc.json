@@ -1,0 +1,7 @@
+{
+  "include": ["src/Framework/**/*.ts"],
+  "exclude": ["tests/**"],
+  "reporter": ["text"],
+  "all": true,
+  "reports-dir": "coverage"
+}

@@ -11,13 +11,14 @@ TypeScript's plan lists only its differences. mbse-schemas is tested in mbse-sch
 | Notebook | Suite | Cases | Covers |
 |---|---|---|---|
 | `01_Package.ipynb` | PKG | 1 | Both packages carry one version, and the framework loads |
+| `02_Logical.ipynb` | LOG | 7 | The install's schemas, each valid, and run again writing nothing, and the singleton `Logical.Diagrams`; ownership: a diagram by `Logical.Diagrams`, a shape by its diagram or its container, a point by its shape, each found by its key, a border point's path read back as JSON, a point or a shape without an owner refused; a shape's one origin and a point's one owner, as `unique` clauses the validator reports; a vector's one rotation per start and end; a container's children in order, and adjacencies between siblings by rotation; compasses: a shape's and its origin's north, a border or extent point's its vector's rotation, modulo 360, negative and fractional; undefined compasses refused: a shape without an origin, and its points, a point with no vector from its shape's origin, or two, and a vector without a rotation |
 
-Total: 1 case.
+Total: 8 cases.
 
 ## Not testable yet
 
-Everything [FEA-056: fungible diagramming keeps agents and humans in the loop](https://github.com/pitaman71/mbse-basis/blob/main/docs/features/FEA-056.md) plans:
-[CAP-237: logical layout schemas](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-237) to [CAP-243: a diagram displayed from its mutation stream](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-243).
+The rest of what [FEA-056: fungible diagramming keeps agents and humans in the loop](https://github.com/pitaman71/mbse-basis/blob/main/docs/features/FEA-056.md) plans:
+[CAP-238: container schemas and grid insertion](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-238) to [CAP-243: a diagram displayed from its mutation stream](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-243).
 
 ---
 

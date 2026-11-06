@@ -17,14 +17,15 @@ TypeScript's plan lists only its differences. mbse-schemas is tested in mbse-sch
 | `03_Container.ipynb` | CNT | 7 | The install's schemas, each valid, run again writing nothing; a container given its grid before its children, each then placed in the next cell, `cell_of` reading where; the extents growing only where the grid widens or lengthens, an empty grid too; a grid growing columns; a child about to be removed leaving its cell and the children after it moving back, two in one mutation and the last; refused: an axis, a span below 1, a second grid, a container with children, a child of a container without a grid; the journal replayed in a fresh store making the same adjustments |
 | `04_Adjacency.ipynb` | ADJ | 9 | Rotations quantized to the nearest quarter turn; a spec moving its child beside the other by one change of the sequence, the rule met; two specs along one side sharing a cell, growing along its grid's axis; removing a spec dropping its rule and reverting its child, keeping the specs to it that remain; a spec the grid cannot meet ignored, and kept; a grid growing columns, and a spec that holds already held; original insertion positions through removals and additions, and a rule whose shapes move together still holding; cell rotation turning the compasses of the shapes cells hold; the journal replayed making the same adjustments |
 | `05_Conflicts.ipynb` | CNF | 8 | A spec that would break an earlier rule that holds ignored; a grid's rules as data; removing the earlier spec lifting the conflict, the ignored rules met in their order; removing a child lifting a conflict its rules made, or one that closing its gap meets with no move of its own; adding children lifting a conflict with the grid's extents; a child reverting out of a shared cell, the rules that hold restored; removing an ignored spec moving nothing; the journal replayed making the same adjustments |
+| `06_Physical.ipynb` | PHY | 5 | The install, after `Logical`'s and `Container`'s, its schemas each valid and run again writing nothing, the annotated schemas given `placement`, `frame` and `viewport`; a point's placement owned by it, its absolute and relative coordinates and direction, its path the point's, written as JSON; a grid's and a cell's frame and a diagram's viewport; one placement per point, as the validator reports; a child removed taking its points' placements and its cell's frame |
 
-Total: 32 cases.
+Total: 37 cases.
 
 ## Not testable yet
 
 The rest of what [FEA-056: fungible diagramming keeps agents and humans in the loop](https://github.com/pitaman71/mbse-basis/blob/main/docs/features/FEA-056.md) plans:
 conflicting rules in physical layout (the rest of [CAP-240: conflicting layout rules ignored and requeued](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-240)), and
-[CAP-241: physical layout schemas](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-241) to [CAP-243: a diagram displayed from its mutation stream](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-243).
+[CAP-242: incremental physical placement](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-242) and [CAP-243: a diagram displayed from its mutation stream](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-243).
 
 ---
 

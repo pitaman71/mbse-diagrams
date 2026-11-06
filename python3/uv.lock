@@ -467,7 +467,7 @@ wheels = [
 
 [[package]]
 name = "mbse-diagrams"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "mbse-schemas" },

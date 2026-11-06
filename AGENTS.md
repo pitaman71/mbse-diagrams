@@ -5,7 +5,8 @@ logical layout of points, vectors and shapes, a container layout of cells and a 
 deterministic function of a mutation sequence. Two implementations exist, `python3/` and `typescript5/`: equivalent
 for the schemas and container layout, with physical layout's components in TypeScript only. Built so far: the logical
 layout's schemas (`Logical`), and the container layout's grids, filled in order and rearranged by
-adjacency specs, the later of two conflicting specs ignored until it can be met (`Container`).
+adjacency specs, the later of two conflicting specs ignored until it can be met (`Container`); and the physical layout's
+schemas (`Physical`).
 
 ## Start here
 

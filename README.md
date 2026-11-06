@@ -15,7 +15,8 @@ algorithm keeps them consistent, one mutation at a time.
 
 Built so far: the logical layout's schemas, `Logical`, and the compass of a point or a shape; and the container layout's
 grids, `Container`, which place a container's children in order and move them beside each other by adjacency specs,
-ignoring the later of two that conflict until it can be met, one change at a time.
+ignoring the later of two that conflict until it can be met, one change at a time; and the physical layout's
+schemas, `Physical`, the coordinates physical layout will give points and frames.
 The design is mbse-basis
 [FEA-056: fungible diagramming keeps agents and humans in the loop](https://github.com/pitaman71/mbse-basis/blob/main/docs/features/FEA-056.md)
 and [the diagrams proposal](https://github.com/pitaman71/mbse-basis/blob/main/proposals/DIAGRAMS.md); the capabilities, in build order, are

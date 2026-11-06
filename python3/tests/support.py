@@ -19,15 +19,13 @@ from mbse.Diagrams.Framework import Container, Logical
 
 
 def symbol(path: str) -> str:
-    """The symbol a step's expression binds the shape at `path` to."""
+    """The symbol a step's expression binds the shape at `path` to: `s_` for the diagram."""
     return "s_" + path.replace(".", "__")
 
 
 def name_of(shape: Any) -> str:
-    """A shape's key: its name in its container, or in its diagram."""
-    for entry in [*shape.container, *shape.diagram]:
-        return entry.name.get()
-    return "?"
+    """A shape's name among its owner's; the diagram's, for the diagram."""
+    return Logical.name_of(shape) or "?"
 
 
 def text(value: Any) -> str:
@@ -43,6 +41,11 @@ def text(value: Any) -> str:
     return json.dumps(plain(value), separators=(",", ":"))
 
 
+def spec_name(b: str, degrees: float) -> str:
+    """The name of the adjacency spec to `b` by `degrees`, among its from_shape's."""
+    return f"to {b} {degrees:g}"
+
+
 class Bench:
     def __init__(self) -> None:
         self.store = Builders.Store()
@@ -53,31 +56,48 @@ class Bench:
 
     # --- the steps: each a mutation, and the container layout's adjustments to it ---
 
-    def grid(self, box: str, span: int, grows: str = "rows", cell_rotation: float = 0.0) -> str:
-        """The shape `box`, made where it is not, given a grid."""
-        return self._step("grid", (box, span, grows, cell_rotation), [box])
+    def layout(self, box: str, span: int, grows: str = "rows", cell_rotation: float = 0.0) -> str:
+        """`box` given a grid before its children: a change of the container layout alone."""
+        return self._step("layout", (box, span, grows, cell_rotation), [box] if box else [])
 
     def child(self, box: str, name: str) -> str:
-        """A child `name` added to `box`."""
-        return self._step("child", (box, name), [f"{box}.{name}"])
+        """A child `name` added to `box`, a shape, or the diagram where `box` is `""`."""
+        return self._step("child", (box, name), [f"{box}.{name}" if box else name])
 
     def spec(self, box: str, a: str, b: str, degrees: float) -> str:
-        """An adjacency spec added from `box`'s child `a` to its child `b`, by `degrees`."""
-        sa, sb = symbol(f"{box}.{a}"), symbol(f"{box}.{b}")
-        return self._step("spec", (box, a, b, degrees), [f"{box}.{a}", f"{box}.{b}"], lambda _: getattr(_, sa)
-                          .adjacent_to([lambda e: e.to_shape(getattr(_, sb)).rotation(lambda r: r.degrees(degrees))]))
+        """An adjacency spec added from `box`'s child `a` to its child `b`, by `degrees`, owned by `a`."""
+        pa, pb = self._path(box, a), self._path(box, b)
+        sa, sb, ss = symbol(pa), symbol(pb), "spec"
+        return self._step("spec", (box, a, b, degrees), [pa, pb],
+                          lambda _: getattr(_, sa).owns({spec_name(b, degrees): lambda e: e.owned(getattr(_, ss))}),
+                          lambda _: getattr(_, ss).from_shape([getattr(_, sa)]).to_shape([getattr(_, sb)])
+                          .rotation(lambda r: r.degrees(degrees)),
+                          spec=True)
 
     def unspec(self, box: str, a: str, b: str) -> str:
         """The adjacency specs from `box`'s child `a` to its child `b` removed."""
-        sa, sb = symbol(f"{box}.{a}"), symbol(f"{box}.{b}")
-        return self._step("unspec", (box, a, b), [f"{box}.{a}", f"{box}.{b}"], lambda _: getattr(_, sa).adjacent_to(
-            lambda x: x.remove(lambda e: e.to_shape(getattr(_, sb)))))
+        pa = self._path(box, a)
+        names = [Logical.name_of(e.adjacency) for e in self.shape(pa).adjacent_to
+                 if name_of([x.shape for x in e.adjacency.to_shape][0]) == b]
+        sa = symbol(pa)
+        return self._step("unspec", (box, a, b), [pa], *[lambda _, n=n: getattr(_, sa).owns(
+            lambda x: x.remove(lambda e: e.name(n))) for n in names])
 
     def unchild(self, box: str, *names: str) -> str:
-        """The children `names` removed from `box`, in one mutation."""
+        """The children `names` removed from `box`, in one mutation, with the specs to them from their siblings."""
+        removals, paths = [], [box] if box else []
+        for n in names:
+            child = self.shape(self._path(box, n))
+            for e in child.adjacent_from:
+                (owner,) = [x.shape for x in e.adjacency.from_shape]
+                if name_of(owner) not in names:
+                    paths.append(self._path(box, name_of(owner)))
+                    removals.append((symbol(self._path(box, name_of(owner))), Logical.name_of(e.adjacency)))
         s = symbol(box)
-        return self._step("unchild", (box, *names), [box], *[lambda _, n=n: getattr(_, s).children(
-            lambda x: x.remove(lambda e: e.name(n))) for n in names])
+        return self._step("unchild", (box, *names), paths,
+                          *[lambda _, n=n: getattr(_, s).owns(lambda x: x.remove(lambda e: e.name(n))) for n in names],
+                          *[lambda _, o=o, n=n: getattr(_, o).owns(lambda x: x.remove(lambda e: e.name(n)))
+                            for o, n in removals])
 
     def turn(self, box: str, degrees: float) -> str:
         """`box`'s cells turned by `degrees`: a change of the container layout alone."""
@@ -91,29 +111,34 @@ class Bench:
     # --- reading the layouts ---
 
     def shape(self, path: str) -> Any:
-        """The shape at `path`."""
-        top, *rest = path.split(".")
-        shape = self.overview.shapes({"name": top})
-        for name in rest:
-            shape = shape.children({"name": name})
+        """The shape at `path`, or the diagram for `""`."""
+        shape = self.overview
+        for name in path.split(".") if path else []:
+            shape = shape.owns({"name": name})
         return shape
 
     @property
     def overview(self) -> Any:
-        return self.store.singleton("Logical.Diagrams").diagrams({"name": "overview"})
+        return self.store.singleton("Logical.Diagrams").owns({"name": "overview"})
 
     def cells(self, box: str) -> str:
         """Each cell of `box`'s grid, in row and column order: its row and column, the names of the children it holds,
         in order, each with its order, and its axis and extents."""
         (entry,) = self.shape(box).grid
-        return text([[[e.row.get(), e.column.get()], [[name_of(h.shape), h.order.get()] for h in e.cell.children],
+        return text([[[e.cell.row.get(), e.cell.column.get()], [[name_of(h.shape), h.order.get()]
+                                                                 for h in e.cell.children],
                       e.cell.grows.get(), e.cell.rows.get(), e.cell.columns.get()]
-                     for e in sorted(entry.grid.cells, key=lambda e: (e.row.get(), e.column.get()))])
+                     for e in sorted(entry.grid.cells, key=lambda e: (e.cell.row.get(), e.cell.column.get()))])
 
     def rules(self, box: str) -> str:
         """`box`'s grid's rules, in the order they reached it: each one's shapes, degrees and whether it is ignored."""
         (entry,) = self.shape(box).grid
-        return text([[e.from_shape, e.to_shape, e.degrees.get(), e.ignored.get()] for e in entry.grid.rules])
+        found = []
+        for e in entry.grid.rules:
+            (spec,) = [s.adjacency for s in e.rule.spec]
+            found.append([[x.shape for x in spec.from_shape][0], [x.shape for x in spec.to_shape][0],
+                          spec.rotation.degrees.get(), e.rule.ignored.get()])
+        return text(found)
 
     def queue(self, box: str) -> str:
         """`box`'s grid's ignored rules, in their order: each one's shapes and degrees."""
@@ -139,30 +164,36 @@ class Bench:
 
     # --- running a step ---
 
-    def _expression(self, paths: list[str], *specs: Any) -> Any:
-        """The mutation that finds the shapes at `paths` by their paths, making them where they are not, and writes
-        `specs` over them."""
+    @staticmethod
+    def _path(box: str, name: str) -> str:
+        return f"{box}.{name}" if box else name
+
+    def _expression(self, paths: list[str], *specs: Any, spec: bool = False) -> Any:
+        """The mutation that finds the shapes at `paths` by their paths, making them where they are not, each owned by
+        its container and in its role there, and writes `specs` over them."""
         L = self.store.Logical
-        symbols: dict[str, Any] = {"directory": L.DiagramDirectory, "diagram": L.OfDiagram}
-        found = [lambda _: _.directory.diagrams({"overview": lambda e: e.diagram(_.diagram)})]
+        symbols: dict[str, Any] = {"directory": L.DiagramDirectory, symbol(""): L.OfDiagram}
+        found = [lambda _: _.directory.owns({"overview": lambda e: e.owned(getattr(_, symbol("")))}),
+                 lambda _: _.directory.diagrams([getattr(_, symbol(""))])]
         for path in paths:
             parts = path.split(".")
             for k in range(len(parts)):
-                here = ".".join(parts[:k + 1])
+                here, up = ".".join(parts[:k + 1]), ".".join(parts[:k])
                 if symbol(here) in symbols:
                     continue
                 symbols[symbol(here)] = L.OfShape
-                if k == 0:
-                    found.append(lambda _, s=symbol(here), key=parts[0]: _.diagram.shapes(
-                        {key: lambda e: e.shape(getattr(_, s))}))
-                else:
-                    found.append(lambda _, s=symbol(here), up=symbol(".".join(parts[:k])), key=parts[k]: getattr(
-                        _, up).children({key: lambda e: e.child(getattr(_, s))}))
+                role = "shapes" if k == 0 else "children"
+                found.append(lambda _, s=symbol(here), u=symbol(up), key=parts[k]: getattr(_, u).owns(
+                    {key: lambda e: e.owned(getattr(_, s))}))
+                found.append(lambda _, s=symbol(here), u=symbol(up), role=role: getattr(getattr(_, u), role)(
+                    [getattr(_, s)]))
+        if spec:  # after its owner's, so that the upsert finds it by its owner and name, never by ranging over all
+            symbols["spec"] = L.OfAdjacency
         return self.store.Mutations.OfTransaction(lambda t: t.mutations([lambda mu: mu.upsert(lambda u: u.exists([
             lambda p: p.symbols(symbols).spec([*found, *specs])]))]))
 
-    def _step(self, kind: str, args: tuple[Any, ...], paths: list[str], *specs: Any) -> str:
-        tx = self._expression(paths, *specs)
+    def _step(self, kind: str, args: tuple[Any, ...], paths: list[str], *specs: Any, spec: bool = False) -> str:
+        tx = self._expression(paths, *specs, spec=spec)
         adjusted = self._apply(kind, args, tx)
         self.journal.append((kind, args, JSON.dumps(Plain.ToPlain(self.store).Transaction(tx)), adjusted))
         return adjusted
@@ -170,30 +201,33 @@ class Bench:
     def _apply(self, kind: str, args: tuple[Any, ...], tx: Any) -> str:
         """Runs the mutation `tx`, then the `Container` function that follows a mutation of `kind`, in a transaction
         of its own, or first, for a removal: its adjustments, or its error, as text."""
-        if kind == "unchild":  # a removal is anticipated: its adjustments come before the mutation that deletes
-            try:
+        box = args[0] if args else ""
+        try:
+            if kind in ("unchild", "unspec"):  # a removal is anticipated: its adjustments come before the mutation
                 with self.store.transaction():
-                    adjustments = [a for name in args[1:] for a in Container.removing(self.shape(f"{args[0]}.{name}"))]
-            except ValueError as error:
-                return f"ValueError: {error}"
-            named = text(adjustments)  # named while what it removes still exists
+                    if kind == "unchild":
+                        adjustments = [a for n in args[1:] for a in Container.removing(self.shape(self._path(box, n)))]
+                    else:
+                        adjustments = [a for e in self.shape(self._path(box, args[1])).adjacent_to
+                                       if name_of([x.shape for x in e.adjacency.to_shape][0]) == args[2]
+                                       for a in Container.unjoining(e.adjacency)]
+                named = text(adjustments)  # named while what it removes still exists
+                self.store.transaction(tx)
+                return named
+        except ValueError as error:
             self.store.transaction(tx)
-            return named
+            return f"ValueError: {error}"
         (frame,) = self.store.transaction(tx)
         if kind == "logical":
             return ""
-        box = args[0]
         try:
             with self.store.transaction():
-                if kind == "grid":
+                if kind == "layout":
                     adjustments = Container.layout(frame[symbol(box)], *args[1:])
                 elif kind == "child":
-                    adjustments = Container.added(frame[symbol(f"{box}.{args[1]}")])
+                    adjustments = Container.added(frame[symbol(self._path(box, args[1]))])
                 elif kind == "spec":
-                    adjustments = Container.adjoined(frame[symbol(f"{box}.{args[1]}")],
-                                                     frame[symbol(f"{box}.{args[2]}")])
-                elif kind == "unspec":
-                    adjustments = Container.unjoined(frame[symbol(f"{box}.{args[2]}")])
+                    adjustments = Container.adjoined(frame["spec"])
                 else:
                     adjustments = Container.rotate(frame[symbol(box)], args[1])
         except ValueError as error:

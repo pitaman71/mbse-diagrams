@@ -12,7 +12,7 @@
 
 import { Builders, JSON as Json, Plain, Validators } from "@mbse/schemas/Framework";
 
-import { Container, Logical } from "../src/Framework/index.js";
+import { Container, Logical, Physical, Placement } from "../src/Framework/index.js";
 
 /** Python's `assert`. */
 export function assert(condition: unknown, message = "assertion failed"): asserts condition {
@@ -24,9 +24,13 @@ export function symbol(path: string): string {
   return "s_" + path.replaceAll(".", "__");
 }
 
-/** A shape's name among its owner's; the diagram's, for the diagram. */
-export function name_of(shape: any): string {
-  return Logical.name_of(shape) ?? "?";
+/** A shape's name among its owner's; the diagram's, for the diagram; and a grid's or a cell's, its owners' names too,
+ * `cpu/grid/0,1`, since every grid is a `grid` and cells of different grids share names. */
+export function name_of(x: any): string {
+  const name = Logical.name_of(x) ?? "?";
+  const kind = x.as_schema().name;
+  if (kind !== "Container.OfGrid" && kind !== "Container.OfCell") return name;
+  return `${name_of(Logical.owner_of(x))}/${name}`;
 }
 
 /** Adjustments, or any value, as compact JSON text, each shape by its name and each pair as a list. */
@@ -48,17 +52,22 @@ export function spec_name(b: string, degrees: number): string {
   return `to ${b} ${degrees}`;
 }
 
-type Entry = [string, unknown[], string, string];
+type Entry = [string, unknown[], string, string, string];
 type Spec = (_: any) => any;
 
 export class Bench {
   store: any;
   journal: Entry[] = [];
+  /** Whether each step is also placed, physically; `placed` is the last step's placement, as text. */
+  physical: boolean;
+  placed = "";
 
-  constructor(fresh = true) {
+  constructor(fresh = true, physical = false) {
     this.store = new Builders.Store();
     this.store.transaction(Logical.install);
     this.store.transaction(Container.install);
+    this.physical = physical;
+    if (physical) this.store.transaction(Physical.install);
     if (fresh) this.logical([]); // the diagram, `overview`
   }
 
@@ -168,11 +177,11 @@ export class Bench {
 
   /** Runs the journal again, in order, in a fresh store, and gives the steps whose adjustments differ. */
   replay(): number[] {
-    const again = new Bench(false);
+    const again = new Bench(false, this.physical);
     const differ: number[] = [];
-    this.journal.forEach(([kind, args, entry, adjusted], i) => {
+    this.journal.forEach(([kind, args, entry, adjusted, placed], i) => {
       const tx = Plain.FromPlain(again.store).Transaction(Json.loads(entry));
-      if (again.apply(kind, args, tx) !== adjusted) differ.push(i);
+      if (again.apply(kind, args, tx) !== adjusted || again.placed !== placed) differ.push(i);
     });
     return differ;
   }
@@ -181,7 +190,7 @@ export class Bench {
 
   /** The mutation that finds the shapes at `paths` by their paths, making them where they are not, each owned by its
    * container and in its role there, and writes `specs` over them. */
-  expression(paths: string[], spec: boolean, ...specs: Spec[]): any {
+  expression(paths: string[], spec: boolean | Record<string, any>, ...specs: Spec[]): any {
     const L = this.store.Logical;
     const symbols: Record<string, any> = { directory: L.DiagramDirectory, [symbol("")]: L.OfDiagram };
     const found: Spec[] = [
@@ -199,15 +208,19 @@ export class Bench {
         found.push((_: any) => _[u][role]([_[s]]));
       });
     }
-    if (spec) symbols.spec = L.OfAdjacency; // after its owner's, so that the upsert finds it by its owner and name
+    // after their owners', so that the upsert finds each by its owner and name, never by ranging over all
+    if (spec === true) symbols.spec = L.OfAdjacency;
+    else if (spec) Object.assign(symbols, spec);
     return this.store.Mutations.OfTransaction((t: any) => t.mutations([(mu: any) => mu.upsert((u: any) => u.exists([
       (p: any) => p.symbols(symbols).spec([...found, ...specs])]))]));
   }
 
-  step(kind: string, args: unknown[], paths: string[], spec = false, ...specs: Spec[]): string {
+  step(kind: string, args: unknown[], paths: string[], spec: boolean | Record<string, any> = false,
+    ...specs: Spec[]): string {
+    this.placed = "";
     const tx = this.expression(paths, spec, ...specs);
     const adjusted = this.apply(kind, args, tx);
-    this.journal.push([kind, args, Json.dumps(Plain.ToPlain(this.store).Transaction(tx)), adjusted]);
+    this.journal.push([kind, args, Json.dumps(Plain.ToPlain(this.store).Transaction(tx)), adjusted, this.placed]);
     return adjusted;
   }
 
@@ -234,11 +247,16 @@ export class Bench {
         named = refused(error);
       }
       this.store.transaction(tx);
+      if (this.physical) this.store.transaction(() => { this.placed = text(Placement.place(this.shape(box))); });
       return named;
     }
     const [frame] = this.store.transaction(tx);
     if (kind === "logical") return "";
     const at = (p: string): any => frame.get(symbol(p));
+    if (kind === "points") {
+      if (this.physical) this.store.transaction(() => { this.placed = text(Placement.reshape(at(box))); });
+      return "";
+    }
     let adjustments: unknown[] = [];
     try {
       this.store.transaction(() => {
@@ -255,7 +273,47 @@ export class Bench {
     } catch (error) {
       return refused(error);
     }
+    if (this.physical) this.store.transaction(() => { this.placed = text(this.place(kind, args, at)); });
     return text(adjustments);
+  }
+
+  /** The physical layout's adjustments to a step the container layout has just followed. */
+  private place(kind: string, args: unknown[], at: (p: string) => any): unknown[] {
+    const box = args[0] as string;
+    if (kind === "child") return Placement.reshape(at(path(box, args[1] as string)));
+    if (kind === "turn") return [...this.shape(box).children].flatMap((e: any) => Placement.reshape(e.child));
+    return Placement.place(this.shape(box));
+  }
+
+  /** The diagram's physical tuning, `{ unit_length, scaling_factor, margin, minimum_size }`, each given set: a
+   * mutation of the logical layout alone, before what it tunes is placed. */
+  tune(tuning: Record<string, number>): string {
+    const d = symbol("");
+    return this.step("logical", [], [], false, ...Object.entries(tuning).map(([name, value]): Spec =>
+      (_: any) => _[d][name](value)));
+  }
+
+  /** The shape at `at` given an origin, and extent points each reached from it by a vector, by `[name, degrees,
+   * length]`: a mutation of the logical layout alone, which the physical layout follows. Returns its placement, as
+   * text. */
+  points(at: string, extents: [string, number, number][]): string {
+    const L = this.store.Logical;
+    const s = symbol(at);
+    const symbols: Record<string, any> = { origin: L.OfPoint };
+    const specs: Spec[] = [
+      (_: any) => _[s].owns({ origin: (e: any) => e.owned(_.origin) }), (_: any) => _.origin.origin_of([_[s]]),
+    ];
+    extents.forEach(([name, degrees, length], k) => {
+      symbols[`p${k}`] = L.OfPoint;
+      symbols[`v${k}`] = L.OfVector;
+      specs.push((_: any) => _[s].owns({ [name]: (e: any) => e.owned(_[`p${k}`]) }),
+        (_: any) => _[`p${k}`].extent_of([_[s]]),
+        (_: any) => _[s].owns({ [`to ${name}`]: (e: any) => e.owned(_[`v${k}`]) }),
+        (_: any) => _[`v${k}`].start([_.origin]).end([_[`p${k}`]]).rotation((r: any) => r.degrees(degrees))
+          .length(length));
+    });
+    this.step("points", [at, extents], [at], symbols, ...specs);
+    return this.placed;
   }
 }
 

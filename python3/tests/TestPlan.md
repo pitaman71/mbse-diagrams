@@ -19,13 +19,13 @@ TypeScript's plan lists only its differences. mbse-schemas is tested in mbse-sch
 | `05_Conflicts.ipynb` | CNF | 8 | A spec that would break an earlier rule that holds ignored; a grid's rules as data; removing the earlier spec lifting the conflict, the ignored rules met in their order; removing a child lifting a conflict its rules made, or one that closing its gap meets with no move of its own; adding children lifting a conflict with the grid's extents; a child reverting out of a shared cell, the rules that hold restored; removing an ignored spec moving nothing; the journal replayed making the same adjustments |
 | `06_Physical.ipynb` | PHY | 5 | The install's schemas, each valid, run again writing nothing, the annotated schemas given `placement` and `frame`, the diagram `unit_length` and `scaling_factor`; a point's placement owned through `Logical.Owns`, its coordinates in diagram units and direction, its path the point's, written as JSON; the frames of a diagram, a shape, a grid and a cell, each with its unit length; one placement per point, as the validator reports; a child removed taking its points' placements and its cell's frame, counted by what the store reaches |
 
-Total: 38 cases.
+Total: 38 cases, and TypeScript's 12 PLC cases, which [its plan](../../typescript5/tests/TestPlan.md) lists.
 
 ## Not testable yet
 
 The rest of what [FEA-056: fungible diagramming keeps agents and humans in the loop](https://github.com/pitaman71/mbse-basis/blob/main/docs/features/FEA-056.md) plans:
 conflicting rules in physical layout (the rest of [CAP-240: conflicting layout rules ignored and requeued](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-240)), and
-[CAP-242: incremental physical placement](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-242) and [CAP-243: a diagram displayed from its mutation stream](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-243).
+[CAP-243: a diagram displayed from its mutation stream](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-243).
 
 ---
 

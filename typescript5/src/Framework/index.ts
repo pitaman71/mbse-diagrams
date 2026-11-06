@@ -11,3 +11,4 @@
 export * as Container from "./Container.js";
 export * as Logical from "./Logical.js";
 export * as Physical from "./Physical.js";
+export * as Placement from "./Placement.js";

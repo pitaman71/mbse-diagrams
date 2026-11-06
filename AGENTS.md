@@ -6,8 +6,8 @@ layout of the grids each container's children are placed in, and a physical layo
 a deterministic function of a mutation sequence. Two implementations exist, `python3/` and `typescript5/`: equivalent
 for the schemas and container layout, with physical layout's components in TypeScript only. Built so far: the logical
 layout's schemas (`Logical`); the container layout's implied grids, filled in order and rearranged by adjacency specs,
-the later of two conflicting specs ignored until it can be met (`Container`); and the physical layout's schemas
-(`Physical`).
+the later of two conflicting specs ignored until it can be met (`Container`); the physical layout's schemas
+(`Physical`); and, in TypeScript only, the incremental physical placement of points and frames (`Placement`).
 
 ## Start here
 

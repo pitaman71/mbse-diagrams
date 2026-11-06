@@ -65,12 +65,14 @@ def data_model(bench: Any, box: str) -> dict[str, Any] | None:
         return None
     if shape is None:
         return None
+    kids = [e.child for e in shape.children] if box else [e.shape for e in shape.shapes]
     children = [{
-        "name": e.name.get(),
-        "specs": [{"to": support.name_of(s.to_shape), "degrees": s.rotation.degrees.get(),
-                   "side": Container.quarter(s.rotation.degrees.get())} for s in e.child.adjacent_to],
-    } for e in shape.children]
-    return {"container": box, "children": children}
+        "name": support.name_of(child),
+        "specs": [{"to": support.name_of([x.shape for x in e.adjacency.to_shape][0]),
+                   "degrees": e.adjacency.rotation.degrees.get(),
+                   "side": Container.quarter(e.adjacency.rotation.degrees.get())} for e in child.adjacent_to],
+    } for child in kids]
+    return {"container": box or support.name_of(shape), "children": children}
 
 
 def container_model(bench: Any, box: str) -> dict[str, Any] | None:
@@ -85,19 +87,26 @@ def container_model(bench: Any, box: str) -> dict[str, Any] | None:
     return {
         "grows": grid.grows.get(), "span": grid.span.get(), "rows": grid.rows.get(), "columns": grid.columns.get(),
         "inserted": grid.inserted.get(), "cell_rotation": grid.cell_rotation.degrees.get(),
-        "cells": {f"{e.row.get()},{e.column.get()}": [[support.name_of(h.shape), h.order.get()]
-                                                       for h in e.cell.children] for e in grid.cells},
-        "rules": [[support.name_of(e.from_shape), support.name_of(e.to_shape), e.degrees.get(), e.ignored.get()]
-                  for e in grid.rules],
+        "cells": {f"{e.cell.row.get()},{e.cell.column.get()}": [[support.name_of(h.shape), h.order.get()]
+                                                                 for h in e.cell.children] for e in grid.cells},
+        "rules": [rule(e.rule) for e in grid.rules],
     }
+
+
+def rule(of: Any) -> list[Any]:
+    """A rule, as data: its spec's shapes and degrees, and whether it is ignored."""
+    (spec,) = [e.adjacency for e in of.spec]
+    return [support.name_of([e.shape for e in spec.from_shape][0]), support.name_of([e.shape for e in spec.to_shape][0]),
+            spec.rotation.degrees.get(), of.ignored.get()]
 
 
 def play(state: dict[str, Any] | None, adjustment: dict[str, Any]) -> dict[str, Any] | None:
     """The container model after one adjustment."""
     kind = adjustment["kind"]
     if kind == "grid":
-        return {"grows": adjustment["grows"], "span": adjustment["span"], "rows": 0, "columns": 0, "inserted": 0,
+        made = {"grows": adjustment["grows"], "span": adjustment["span"], "rows": 0, "columns": 0, "inserted": 0,
                 "cell_rotation": adjustment["cell_rotation"], "cells": {}, "rules": []}
+        return made if state is None or adjustment["container"] == state.get("container") else {**made, "other": True}
     state = copy.deepcopy(state)
     assert state is not None
     cells = state["cells"]
@@ -132,11 +141,12 @@ def play(state: dict[str, Any] | None, adjustment: dict[str, Any]) -> dict[str, 
 def describe(kind: str, args: tuple[Any, ...]) -> str:
     """The mutation, in words."""
     box = args[0] if args else ""
-    if kind == "grid":
+    if kind == "layout":
         box, span, grows, turn = args
-        return f"give {box} a grid {span} wide, growing {grows}" + (f", its cells turned {turn:g}°" if turn else "")
+        return f"lay {box or 'the diagram'} out in a grid {span} wide, growing {grows}" + (
+            f", its cells turned {turn:g}°" if turn else "")
     if kind == "child":
-        return f"add child {args[1]} to {box}"
+        return f"add child {args[1]} to {box or 'the diagram'}"
     if kind == "spec":
         return f"add spec {args[1]} → {args[2]}, {args[3]:g}° ({Container.quarter(args[3])})"
     if kind == "unspec":
@@ -152,12 +162,12 @@ def wrap() -> None:
     original = support.Bench._step
 
     @functools.wraps(original)
-    def recorded(self: Any, kind: str, args: tuple[Any, ...], paths: list[str], *specs: Any) -> str:
+    def recorded(self: Any, kind: str, args: tuple[Any, ...], paths: list[str], *specs: Any, spec: bool = False) -> str:
         box = args[0] if kind != "logical" and args else (paths[0].split(".")[0] if paths else "")
         if not hasattr(self, "_recording"):
-            return original(self, kind, args, paths, *specs)
+            return original(self, kind, args, paths, *specs, spec=spec)
         data_before, model_before = data_model(self, box), container_model(self, box)
-        adjusted = original(self, kind, args, paths, *specs)
+        adjusted = original(self, kind, args, paths, *specs, spec=spec)
         data_after, model_after = data_model(self, box), container_model(self, box)
         mutation = json.loads(self.journal[-1][2])
         error = adjusted if adjusted.startswith("ValueError") else None

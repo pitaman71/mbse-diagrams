@@ -1,7 +1,8 @@
 """The container layout of a diagram: each container shape's grid of cells, and the children in each, with no
 coordinates of any kind
 ([CAP-238: container schemas and grid insertion](mbse:mbse-basis/docs/capabilities/CAP-238.md),
-[CAP-239: grid adjacency](mbse:mbse-basis/docs/capabilities/README.md#CAP-239)).
+[CAP-239: grid adjacency](mbse:mbse-basis/docs/capabilities/CAP-239.md),
+[CAP-240: conflicting layout rules ignored and requeued](mbse:mbse-basis/docs/capabilities/README.md#CAP-240)).
 
 Normal schemas, installed after `Logical`'s: `store.transaction(Container.install)`. A `Container.OfGrid` is a container
 shape's layout, owned by it (`Container.Layout`), keyless: one per shape. It grows along one axis, `grows`, `"rows"` or
@@ -11,18 +12,28 @@ its children occupy, and `inserted` counts the children it has placed. A `Contai
 (`Container.Holds`), each with its `order`, its original insertion position: a shape is in one cell. A cell is itself a
 container, oriented as its grid's container is, turned by the grid's `cell_rotation`, a `Logical.OfRotation`: the
 compass of each shape it holds is its container's, turned so. A cell that holds several grows along its grid's axis,
-`grows`, its extents the cells its shapes occupy.
+`grows`, its extents the cells its shapes occupy. A grid's `rules` (`Container.Rules`) are its children's adjacency
+specs, in the order they reached it, each `from_shape` to `to_shape` by `degrees`, and whether it is `ignored`.
 
-The layout is incremental: each function adjusts it to one change of the logical layout, within the transaction that
-made the change, and leaves alone what that change does not touch. A grid is a sequence of cells, placed in order: along
-a row, `span` cells, then the next row down, where it grows rows; down a column, then the next column right, where it
-grows columns. `layout(shape, span, grows, cell_rotation)` gives a container shape its grid and places the children it
-already has, in order, then their adjacency specs; `rotate(shape, degrees)` turns its cells; `added(child)` places a
-child its container has just gained in the next cell; `removed(shape)` closes the gaps the children its container has
-just lost leave. `adjoined(from_shape, to_shape)` moves `to_shape` beside `from_shape`, along the rotation of the
-adjacency spec just added between them, quantized to the nearest quarter turn, where one change of the sequence can;
-`unjoined(to_shape)` reverts it to its original insertion position, once a spec to it is removed, and applies those that
-remain.
+The layout is incremental: it follows the logical layout's mutations, one at a time, and leaves alone what a mutation
+does not touch. Each function adjusts it to one mutation, in a transaction of its own, after the mutation, or before it
+for a removal, which it anticipates while what is removed still exists; and each returns its adjustments, in order, as
+data: a grid made, a shape placed, moved or leaving its cell, a rule held, met, ignored or dropped, the extents changed,
+the cells turned. A grid is a sequence of cells, placed in order: along a row, `span` cells, then the next row down,
+where it grows rows; down a column, then the next column right, where it grows columns. `layout(shape, span, grows,
+cell_rotation)` gives a container shape its grid, before its children, which reach it afterwards; `rotate(shape,
+degrees)` turns its cells; `added(child)` places a child its container has just gained in the next cell;
+`removing(child)` closes the gap a child about to be removed leaves; `adjoined(from_shape, to_shape)` takes the
+adjacency spec just added between them as the grid's last rule; `unjoined(to_shape)` drops the rules whose specs to it
+were just removed, reverting it to its original insertion position where one of them had placed it.
+
+After each mutation the grid settles. It held every rule but the ignored before the mutation, so only the rules the
+mutation touched, a new one and the ignored are checked, in the order they reached the grid: each kept where it holds;
+where it does not, met by one change of the sequence that breaks no earlier rule that holds, moving its `to_shape`
+beside its `from_shape` along its rotation, quantized to the nearest quarter turn, into a cell of its own or into the
+cell on that side a rule along the same side placed, which they then share; and where no such change can, ignored, the
+later of the incompatible rules, until a mutation lets it be met, in its turn. The shapes a change moves are touched in
+turn, for the rules after it.
 """
 
 from __future__ import annotations
@@ -31,7 +42,7 @@ from typing import Any
 
 from mbse.Schemas.Framework import Proxies
 
-__all__ = ["install", "layout", "rotate", "added", "removed", "adjoined", "unjoined", "cell_of", "quarter"]
+__all__ = ["install", "layout", "rotate", "added", "removing", "adjoined", "unjoined", "ignored", "cell_of", "quarter"]
 
 AXES = ("rows", "columns")
 QUARTERS = ("north", "east", "south", "west")
@@ -48,7 +59,7 @@ def install(txn: Any) -> Any:
     return txn.uid("mbse.Diagrams.Container/1").mutations([lambda mu: mu.upsert(lambda u: u.exists([lambda p: p
         .symbols({
             "OfShape": S.OfObject, "OfRotation": S.OfObject, "OfGrid": S.OfObject, "Layout": S.OfRelation,
-            "OfCell": S.OfObject, "Cells": S.OfRelation, "Holds": S.OfRelation,
+            "OfCell": S.OfObject, "Cells": S.OfRelation, "Holds": S.OfRelation, "Rules": S.OfRelation,
         })
         .spec([
             lambda _: _.OfRotation.name("Logical.OfRotation"),  # found by its name
@@ -66,6 +77,7 @@ def install(txn: Any) -> Any:
             }).adjacencies([
                 lambda t: t.name("shape").relation([_.Layout]).me("grid").owner(True),
                 lambda t: t.name("cells").relation([_.Cells]).me("grid"),
+                lambda t: t.name("rules").relation([_.Rules]).me("grid"),
             ]),
             lambda _: _.Cells.name("Container.Cells").links([
                 lambda t: t.name("grid"),
@@ -83,98 +95,120 @@ def install(txn: Any) -> Any:
                 lambda t: t.name("cell"),
                 lambda t: t.name("shape"),
             ]).properties({"order": S.OfInt}).uniques([["cell"]]),  # a shape in one cell
+            lambda _: _.Rules.name("Container.Rules").links([
+                lambda t: t.name("grid"),
+                lambda t: t.name("from_shape"),
+                lambda t: t.name("to_shape"),
+            ]).properties({"degrees": S.OfFloat, "ignored": S.OfBool}),
             lambda _: _.OfShape.name("Logical.OfShape").adjacencies([  # found by its name: the install adds to it
                 lambda t: t.name("grid").relation([_.Layout]).me("shape"),
                 lambda t: t.name("cell").relation([_.Holds]).me("shape"),
+                lambda t: t.name("rules_from").relation([_.Rules]).me("from_shape"),
+                lambda t: t.name("rules_to").relation([_.Rules]).me("to_shape"),
             ]),
         ])]))])
 
 
-def layout(shape: Any, span: int, grows: str = "rows", cell_rotation: float = 0.0) -> Any:
-    """Gives the container `shape` a grid of `span` cells along the axis it does not grow along, `grows`, each cell
-    turned by `cell_rotation` degrees from the container's compass, and places the children it already has in it, in
-    order, then their adjacency specs, in order; returns the grid. Within a transaction."""
+def layout(shape: Any, span: int, grows: str = "rows", cell_rotation: float = 0.0) -> list[dict[str, Any]]:
+    """Gives the container `shape`, which has no children yet, a grid of `span` cells along the axis it does not grow
+    along, `grows`, each cell turned by `cell_rotation` degrees from the container's compass; its children reach it
+    afterwards, each as a mutation. Returns the adjustment: the grid made. Within a transaction."""
     if grows not in AXES:
         raise ValueError(f"a grid grows rows or columns, not {grows!r}")
     if not isinstance(span, int) or isinstance(span, bool) or span < 1:
         raise ValueError(f"a grid's span is a positive int, not {span!r}")
     if list(shape.grid):
         raise ValueError("a shape has one grid")
+    if list(shape.children):
+        raise ValueError("a container's grid comes before its children, which reach it as mutations")
     Proxies.store_of(shape).Logical.OfShape(shape, lambda s: s.grid(lambda a: a.insert(lambda e: e.grid(
         lambda g: g.grows(grows).span(span).rows(0).columns(0).inserted(0).cell_rotation(
             lambda r: r.degrees(cell_rotation))))))
-    for entry in shape.children:
-        added(entry.child)
-    for entry in shape.children:
-        for spec in entry.child.adjacent_to:
-            adjoined(entry.child, spec.to_shape)
-    return _grid(shape)
+    return [{"kind": "grid", "shape": shape, "span": span, "grows": grows, "cell_rotation": cell_rotation}]
 
 
-def rotate(shape: Any, degrees: float) -> None:
+def rotate(shape: Any, degrees: float) -> list[dict[str, Any]]:
     """Turns the cells of the container `shape`'s grid by `degrees` from its compass, and with them the compasses of the
-    shapes they hold. Within a transaction."""
+    shapes they hold. Returns the adjustment. Within a transaction."""
     grid = _grid(shape)
     Proxies.store_of(grid).Container.OfGrid(grid, lambda g: g.cell_rotation(lambda r: r.degrees(degrees)))
+    return [{"kind": "rotate", "degrees": degrees}]
 
 
-def added(child: Any) -> None:
-    """Places `child`, which its container has just gained, in the next cell of its container's grid. Within the
-    transaction that added it."""
+def added(child: Any) -> list[dict[str, Any]]:
+    """Places `child`, which its container has just gained, in the next cell of its container's grid, then settles.
+    Returns the adjustments, in order. Within the transaction that added it, or the next."""
     grid = _grid_of(child)
     order = grid.inserted.get()
     Proxies.store_of(grid).Container.OfGrid(grid, lambda g: g.inserted(order + 1))
-    _arrange(grid, [*_sequence(grid), _Cell([(child, order)])])
+    before = _sequence(grid)
+    after = [*before, _Cell([(child, order)])]
+    adjustments = [{"kind": "place", "shape": child, "order": order,
+                    "to": _position(len(before), grid.span.get(), grid.grows.get())}]
+    return _settle(grid, after, _rules(grid), {id(child)}, adjustments)
 
 
-def removed(shape: Any) -> None:
-    """Closes the gaps the children the container `shape` has just lost leave in its grid: each child after one moves
-    back, and a cell left empty goes. Within the transaction that removed them."""
-    grid = _grid(shape)
-    children = {id(e.child) for e in shape.children}
-    cells = [_Cell([held for held in cell.held if id(held[0]) in children], cell.grows) for cell in _sequence(grid)]
-    _arrange(grid, [cell for cell in cells if cell.held])
-
-
-def adjoined(from_shape: Any, to_shape: Any) -> bool:
-    """Moves `to_shape` beside `from_shape`, along the rotation of the adjacency spec between them, quantized to the
-    nearest quarter turn: into the cell on that side where it already holds a shape a spec from `from_shape` along that
-    side placed, which it then shares, growing along its grid's axis, or else into a cell of its own there, where one
-    change of the sequence makes room. Returns whether it did; a spec the grid cannot meet is ignored. Within the
-    transaction that added the spec."""
-    spec = [e for e in from_shape.adjacent_to if e.to_shape is to_shape][-1]
-    side = quarter(spec.rotation.degrees.get())
-    grid = _grid_of(from_shape)
-    sequence, held = _without(_sequence(grid), to_shape)
+def removing(child: Any) -> list[dict[str, Any]]:
+    """Anticipates the removal of `child` from its container, before the mutation that removes it, which deletes it and
+    its rules: it leaves its cell, the children after it move back one, a cell it leaves empty goes, and its rules are
+    dropped; then settles. Returns the adjustments, in order. Within a transaction of its own, before the removal."""
+    grid = _grid_of(child)
     span, grows = grid.span.get(), grid.grows.get()
-    i = next(k for k, cell in enumerate(sequence) if any(s is from_shape for s, _ in cell.held))
-    step = STEPS[grows, side]
-    beside = {"next": i + 1, "prev": i - 1, "down": i + span, "up": i - span}[step]
-    if 0 <= beside < len(sequence) and _placed(grid, from_shape, sequence[beside], side, i, beside):
-        sequence[beside].held.append(held)
-        sequence[beside].grows = grows  # a cell is oriented as its container is
-        _arrange(grid, sequence)
-        return True
-    at = {"next": i + 1, "prev": i, "down": i + span, "up": i + 1 - span}[step]
-    if not {"next": i % span != span - 1, "prev": (i + 1) % span != 0, "down": at <= len(sequence),
-            "up": at >= 0}[step]:
-        return False
-    sequence.insert(at, _Cell([held]))
-    _arrange(grid, sequence)
-    return True
+    before = _sequence(grid)
+    (i,) = [k for k, cell in enumerate(before) if any(s is child for s, _ in cell.held)]
+    after, _ = _without(before, child)
+    adjustments: list[dict[str, Any]] = [{"kind": "leave", "shape": child, "from": _position(i, span, grows)}]
+    moves = _moves(before, after, span, grows)
+    adjustments += moves
+    rules = []
+    for rule in _rules(grid):
+        if rule.from_shape is child or rule.to_shape is child:
+            adjustments.append(_status(rule, "dropped"))
+        else:
+            rules.append(rule)
+    return _settle(grid, after, rules, {id(m["shape"]) for m in moves}, adjustments)
 
 
-def unjoined(to_shape: Any) -> None:
-    """Reverts `to_shape`, an adjacency spec to which was just removed, to its original insertion position: before the
-    first cell whose first shape was placed after it. Then applies the specs to it that remain, in order. Within the
-    transaction that removed the spec."""
+def adjoined(from_shape: Any, to_shape: Any) -> list[dict[str, Any]]:
+    """Takes the adjacency spec just added from `from_shape` to `to_shape` as its container's grid's last rule, and
+    settles. Returns the adjustments, in order, the new rule's status among them: held, met, or ignored where the grid
+    cannot meet it without breaking an earlier one. Within the transaction that added the spec, or the next."""
+    spec = [e for e in from_shape.adjacent_to if e.to_shape is to_shape][-1]
+    grid = _grid_of(from_shape)
+    rule = _Rule(from_shape, to_shape, spec.rotation.degrees.get(), False)
+    rule.new = True
+    return _settle(grid, _sequence(grid), [*_rules(grid), rule], set(), [])
+
+
+def unjoined(to_shape: Any) -> list[dict[str, Any]]:
+    """Drops the rules whose adjacency specs to `to_shape` were just removed, reverting it to its original insertion
+    position where one that held placed it: before the first cell whose first shape was placed after it. Then settles.
+    Returns the adjustments, in order. Within the transaction that removed the specs, or the next."""
     grid = _grid_of(to_shape)
-    sequence, held = _without(_sequence(grid), to_shape)
-    at = next((k for k, cell in enumerate(sequence) if cell.held[0][1] > held[1]), len(sequence))
-    sequence.insert(at, _Cell([held]))
-    _arrange(grid, sequence)
-    for spec in to_shape.adjacent_from:
-        adjoined(spec.from_shape, to_shape)
+    specs = [(id(e.from_shape), e.rotation.degrees.get()) for e in to_shape.adjacent_from]
+    rules, dropped = [], []
+    for rule in _rules(grid):
+        if rule.to_shape is to_shape and (id(rule.from_shape), rule.degrees) in specs:
+            specs.remove((id(rule.from_shape), rule.degrees))
+            rules.append(rule)
+        elif rule.to_shape is to_shape:
+            dropped.append(rule)
+        else:
+            rules.append(rule)
+    adjustments = [_status(rule, "dropped") for rule in dropped]
+    before = sequence = _sequence(grid)
+    if any(not rule.ignored for rule in dropped):
+        sequence, held = _without(sequence, to_shape)
+        at = next((k for k, cell in enumerate(sequence) if cell.held[0][1] > held[1]), len(sequence))
+        sequence.insert(at, _Cell([held]))
+    moves = _moves(before, sequence, grid.span.get(), grid.grows.get())
+    return _settle(grid, sequence, rules, {id(m["shape"]) for m in moves}, adjustments + moves)
+
+
+def ignored(shape: Any) -> list[tuple[Any, Any, float]]:
+    """The rules of the container `shape`'s grid that are ignored, in the order they reached it: each one's
+    `from_shape`, `to_shape` and degrees."""
+    return [(r.from_shape, r.to_shape, r.degrees) for r in _rules(_grid(shape)) if r.ignored]
 
 
 def cell_of(shape: Any) -> tuple[int, int] | None:
@@ -199,6 +233,15 @@ class _Cell:
         self.held, self.grows = held, grows
 
 
+class _Rule:
+    """A rule of a grid: an adjacency spec from `from_shape` to `to_shape` by `degrees`, and whether it is ignored."""
+
+    def __init__(self, from_shape: Any, to_shape: Any, degrees: float, ignored: bool) -> None:
+        self.from_shape, self.to_shape, self.degrees, self.ignored = from_shape, to_shape, degrees, ignored
+        self.side = quarter(degrees)
+        self.new = False  # a rule just taken, which settling checks first
+
+
 def _grid(shape: Any) -> Any:
     entries = list(shape.grid)
     if not entries:
@@ -219,6 +262,11 @@ def _sequence(grid: Any) -> list[_Cell]:
     return [_Cell([(e.shape, e.order.get()) for e in cell.children], cell.grows.get()) for cell in cells]
 
 
+def _rules(grid: Any) -> list[_Rule]:
+    """The grid's rules, in the order they reached it."""
+    return [_Rule(e.from_shape, e.to_shape, e.degrees.get(), e.ignored.get()) for e in grid.rules]
+
+
 def _without(sequence: list[_Cell], shape: Any) -> tuple[list[_Cell], tuple[Any, int]]:
     """The sequence without `shape`, a cell it was alone in gone, and what held it."""
     (held,) = [h for cell in sequence for h in cell.held if h[0] is shape]
@@ -226,21 +274,123 @@ def _without(sequence: list[_Cell], shape: Any) -> tuple[list[_Cell], tuple[Any,
     return [cell for cell in cells if cell.held], held
 
 
-def _placed(grid: Any, from_shape: Any, cell: _Cell, side: str, i: int, beside: int) -> bool:
-    """Whether `cell`, at `beside` in the sequence, is on `side` of `from_shape`'s, at `i`, and holds a shape that a
-    spec from `from_shape` along `side` placed."""
-    span, grows = grid.span.get(), grid.grows.get()
-    (r, c), (br, bc) = _position(i, span, grows), _position(beside, span, grows)
-    if (br - r, bc - c) != OFFSETS[side]:
-        return False
-    targets = {id(e.to_shape) for e in from_shape.adjacent_to if quarter(e.rotation.degrees.get()) == side}
-    return any(id(s) in targets for s, _ in cell.held)
+def _index(sequence: list[_Cell], shape: Any) -> int:
+    return next(k for k, cell in enumerate(sequence) if any(s is shape for s, _ in cell.held))
 
 
 def _position(index: int, span: int, grows: str) -> tuple[int, int]:
     """The row and column of the `index`th cell of a grid of `span` that grows `grows`."""
     major, minor = divmod(index, span)
     return (major, minor) if grows == "rows" else (minor, major)
+
+
+def _holds(sequence: list[_Cell], rule: _Rule, span: int, grows: str) -> bool:
+    """Whether `rule`'s `to_shape` is on its side of its `from_shape` in `sequence`."""
+    (r, c), (tr, tc) = (_position(_index(sequence, s), span, grows) for s in (rule.from_shape, rule.to_shape))
+    return (tr - r, tc - c) == OFFSETS[rule.side]
+
+
+def _meet(sequence: list[_Cell], rule: _Rule, kept: list[_Rule], span: int,
+          grows: str) -> tuple[list[_Cell], list[dict[str, Any]]] | None:
+    """The sequence with `rule` met by one change, and the moves it makes, breaking none of `kept` that those moves
+    touch, or `None` where no change can: its `to_shape` into the cell on its side of its `from_shape` that holds a
+    shape a kept rule along the same side from it placed, which it then shares, or else into a cell of its own there."""
+    rest, held = _without(sequence, rule.to_shape)
+    i = _index(rest, rule.from_shape)
+    step = STEPS[grows, rule.side]
+    beside = {"next": i + 1, "prev": i - 1, "down": i + span, "up": i - span}[step]
+    shared = {id(k.to_shape) for k in kept if k.from_shape is rule.from_shape and k.side == rule.side}
+    candidates = []
+    if 0 <= beside < len(rest) and any(id(s) in shared for s, _ in rest[beside].held):
+        joined = [_Cell(list(cell.held), cell.grows) for cell in rest]
+        joined[beside].held.append(held)
+        joined[beside].grows = grows  # a cell is oriented as its container is
+        candidates.append(joined)
+    at = {"next": i + 1, "prev": i, "down": i + span, "up": i + 1 - span}[step]
+    if {"next": i % span != span - 1, "prev": (i + 1) % span != 0, "down": at <= len(rest), "up": at >= 0}[step]:
+        candidates.append([*rest[:at], _Cell([held]), *rest[at:]])
+    for candidate in candidates:
+        moves = _moves(sequence, candidate, span, grows)
+        moved = {id(m["shape"]) for m in moves}
+        touched = [k for k in kept if id(k.from_shape) in moved or id(k.to_shape) in moved]
+        if _holds(candidate, rule, span, grows) and all(_holds(candidate, k, span, grows) for k in touched):
+            return candidate, moves
+    return None
+
+
+def _settle(grid: Any, sequence: list[_Cell], rules: list[_Rule], touched: set[int],
+            adjustments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Settles the grid on `sequence` and `rules`, after a change that moved the shapes `touched`, and returns
+    `adjustments` with what settling adjusts after them. The grid held every rule but the ignored before the change, so
+    only the rules it touched, a new one and the ignored need checking, in the order they reached the grid: each kept
+    where it holds, met by one change that breaks no earlier kept rule where it does not, and ignored where none can;
+    the shapes a change moves are touched in turn, for the rules after it. Writes the sequence, the rules and the
+    extents."""
+    span, grows = grid.span.get(), grid.grows.get()
+    extents = (grid.rows.get(), grid.columns.get())
+    touched = set(touched)
+    kept: list[_Rule] = []
+    for rule in rules:
+        new = rule.new
+        if not (new or rule.ignored or id(rule.from_shape) in touched or id(rule.to_shape) in touched):
+            kept.append(rule)  # untouched: it holds, as it did
+            continue
+        was = None if new else ("ignored" if rule.ignored else "held")
+        if _holds(sequence, rule, span, grows):
+            rule.ignored = False
+            if was != "held":
+                adjustments.append(_status(rule, "held" if new else "met"))
+        else:
+            met = _meet(sequence, rule, kept, span, grows)
+            if met is None:
+                rule.ignored = True
+                if was != "ignored":
+                    adjustments.append(_status(rule, "ignored"))
+            else:
+                sequence, moves = met
+                rule.ignored = False
+                adjustments += moves
+                adjustments.append(_status(rule, "met"))
+                touched |= {id(m["shape"]) for m in moves}
+        if not rule.ignored:
+            kept.append(rule)
+    _arrange(grid, sequence)
+    _record(grid, rules)
+    if (grid.rows.get(), grid.columns.get()) != extents:
+        adjustments.append({"kind": "extents", "rows": grid.rows.get(), "columns": grid.columns.get()})
+    return adjustments
+
+
+def _moves(before: list[_Cell], after: list[_Cell], span: int, grows: str) -> list[dict[str, Any]]:
+    """The moves that take the shapes of `before` to their cells in `after`, in the order of `after`: each shape in both
+    whose cell changed."""
+    was = {id(s): _position(i, span, grows) for i, cell in enumerate(before) for s, _ in cell.held}
+    return [{"kind": "move", "shape": s, "from": was[id(s)], "to": _position(i, span, grows)}
+            for i, cell in enumerate(after) for s, _ in cell.held
+            if id(s) in was and was[id(s)] != _position(i, span, grows)]
+
+
+def _status(rule: _Rule, status: str) -> dict[str, Any]:
+    """The adjustment that gives `rule` its `status`: held, met, ignored or dropped."""
+    return {"kind": "rule", "from_shape": rule.from_shape, "to_shape": rule.to_shape, "degrees": rule.degrees,
+            "status": status}
+
+
+def _record(grid: Any, rules: list[_Rule]) -> None:
+    """Makes the grid's rules `rules`, in order, writing only where they change."""
+    now = [(e.from_shape, e.to_shape, e.degrees.get(), e.ignored.get()) for e in grid.rules]
+    wanted = [(r.from_shape, r.to_shape, r.degrees, r.ignored) for r in rules]
+    if len(now) == len(wanted) and all(a[0] is b[0] and a[1] is b[1] and a[2:] == b[2:] for a, b in zip(now, wanted)):
+        return
+
+    def write(a: Any) -> Any:
+        a.clear()
+        for from_shape, to_shape, degrees, ignored in wanted:
+            a.insert(lambda e, f=from_shape, t=to_shape, d=degrees, i=ignored: e.from_shape(f).to_shape(t)
+                     .degrees(d).ignored(i))
+        return a
+
+    Proxies.store_of(grid).Container.OfGrid(grid, lambda g: g.rules(write))
 
 
 def _arrange(grid: Any, sequence: list[_Cell]) -> None:

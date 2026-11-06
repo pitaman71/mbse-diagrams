@@ -17,21 +17,25 @@
  * are its children's adjacency specs, in the order they reached it, each `from_shape` to `to_shape` by `degrees`, and
  * whether it is `ignored`.
  *
- * The layout is incremental: each function adjusts it to one change of the logical layout, within the transaction that
- * made the change, and leaves alone what that change does not touch. A grid is a sequence of cells, placed in order:
- * along a row, `span` cells, then the next row down, where it grows rows; down a column, then the next column right,
- * where it grows columns. `layout(shape, span, grows, cell_rotation)` gives a container shape its grid and places the
- * children it already has, in order, then their adjacency specs; `rotate(shape, degrees)` turns its cells;
- * `added(child)` places a child its container has just gained in the next cell; `removed(shape)` closes the gaps the
- * children its container has just lost leave. `adjoined(from_shape, to_shape)` takes the adjacency spec just added
- * between them as the grid's last rule; `unjoined(to_shape)` drops the rules whose specs to it were just removed,
- * reverting it to its original insertion position where one of them had placed it.
+ * The layout is incremental: it follows the logical layout's mutations, one at a time, and leaves alone what a mutation
+ * does not touch. Each function adjusts it to one mutation, in a transaction of its own, after the mutation, or before
+ * it for a removal, which it anticipates while what is removed still exists; and each returns its adjustments, in
+ * order, as data: a grid made, a shape placed, moved or leaving its cell, a rule held, met, ignored or dropped, the
+ * extents changed, the cells turned. A grid is a sequence of cells, placed in order: along a row, `span` cells, then
+ * the next row down, where it grows rows; down a column, then the next column right, where it grows columns.
+ * `layout(shape, span, grows, cell_rotation)` gives a container shape its grid, before its children, which reach it
+ * afterwards; `rotate(shape, degrees)` turns its cells; `added(child)` places a child its container has just gained in
+ * the next cell; `removing(child)` closes the gap a child about to be removed leaves; `adjoined(from_shape, to_shape)`
+ * takes the adjacency spec just added between them as the grid's last rule; `unjoined(to_shape)` drops the rules whose
+ * specs to it were just removed, reverting it to its original insertion position where one of them had placed it.
  *
- * After each change the grid settles: each rule, in the order they reached it, is kept where it holds; where it does
- * not, it is met by one change of the sequence that breaks no earlier rule that holds, moving its `to_shape` beside its
- * `from_shape` along its rotation, quantized to the nearest quarter turn, into a cell of its own or into the cell on
- * that side a rule along the same side placed, which they then share; and where no such change can, it is ignored, the
- * later of the incompatible rules, until a change lets it be met, in its turn.
+ * After each mutation the grid settles. It held every rule but the ignored before the mutation, so only the rules the
+ * mutation touched, a new one and the ignored are checked, in the order they reached the grid: each kept where it
+ * holds; where it does not, met by one change of the sequence that breaks no earlier rule that holds, moving its
+ * `to_shape` beside its `from_shape` along its rotation, quantized to the nearest quarter turn, into a cell of its own
+ * or into the cell on that side a rule along the same side placed, which they then share; and where no such change can,
+ * ignored, the later of the incompatible rules, until a mutation lets it be met, in its turn. The shapes a change moves
+ * are touched in turn, for the rules after it.
  */
 
 import { Errors, Proxies } from "@mbse/schemas/Framework";
@@ -105,66 +109,82 @@ export function install(txn: any): any {
     ])]))]);
 }
 
-/** Gives the container `shape` a grid of `span` cells along the axis it does not grow along, `grows`, each cell turned
- * by `cell_rotation` degrees from the container's compass, and places the children it already has in it, in order,
- * then takes their adjacency specs as its rules, in order, and settles; returns the grid. Within a transaction. */
-export function layout(shape: any, span: bigint, grows = "rows", cell_rotation = 0): any {
+/** An adjustment of the container layout, as data: what one change did, its shapes the objects themselves. */
+export type Adjustment = Record<string, any>;
+
+/** Gives the container `shape`, which has no children yet, a grid of `span` cells along the axis it does not grow
+ * along, `grows`, each cell turned by `cell_rotation` degrees from the container's compass; its children reach it
+ * afterwards, each as a mutation. Returns the adjustment: the grid made. Within a transaction. */
+export function layout(shape: any, span: bigint, grows = "rows", cell_rotation = 0): Adjustment[] {
   if (!AXES.includes(grows)) throw new ValueError(`a grid grows rows or columns, not ${repr(grows)}`);
   if (typeof span !== "bigint" || span < 1n) throw new ValueError(`a grid's span is a positive int, not ${repr(span)}`);
   if ([...shape.grid].length > 0) throw new ValueError("a shape has one grid");
+  if ([...shape.children].length > 0) {
+    throw new ValueError("a container's grid comes before its children, which reach it as mutations");
+  }
   (Proxies.store_of(shape) as any).Logical.OfShape(shape, (s: any) => s.grid((a: any) => a.insert((e: any) => e.grid(
     (g: any) => g.grows(grows).span(span).rows(0n).columns(0n).inserted(0n).cell_rotation(
       (r: any) => r.degrees(cell_rotation))))));
-  const grid = gridOf(shape);
-  const sequence: Cell[] = [...shape.children].map((entry: any, order) => cell([[entry.child, BigInt(order)]]));
-  (Proxies.store_of(grid) as any).Container.OfGrid(grid, (g: any) => g.inserted(BigInt(sequence.length)));
-  const rules = [...shape.children].flatMap((entry: any) => [...entry.child.adjacent_to]
-    .map((spec: any) => rule(entry.child, spec.to_shape, spec.rotation.degrees.get(), false)));
-  settle(grid, sequence, rules);
-  return grid;
+  return [{ kind: "grid", shape, span, grows, cell_rotation }];
 }
 
 /** Turns the cells of the container `shape`'s grid by `degrees` from its compass, and with them the compasses of the
- * shapes they hold. Within a transaction. */
-export function rotate(shape: any, degrees: number): void {
+ * shapes they hold. Returns the adjustment. Within a transaction. */
+export function rotate(shape: any, degrees: number): Adjustment[] {
   const grid = gridOf(shape);
   (Proxies.store_of(grid) as any).Container.OfGrid(grid, (g: any) => g.cell_rotation((r: any) => r.degrees(degrees)));
+  return [{ kind: "rotate", degrees }];
 }
 
 /** Places `child`, which its container has just gained, in the next cell of its container's grid, then settles.
- * Within the transaction that added it. */
-export function added(child: any): void {
+ * Returns the adjustments, in order. Within the transaction that added it, or the next. */
+export function added(child: any): Adjustment[] {
   const grid = gridOfChild(child);
   const order: bigint = grid.inserted.get();
   (Proxies.store_of(grid) as any).Container.OfGrid(grid, (g: any) => g.inserted(order + 1n));
-  settle(grid, [...sequenceOf(grid), cell([[child, order]])], rulesOf(grid));
+  const before = sequenceOf(grid);
+  const after = [...before, cell([[child, order]])];
+  const adjustments: Adjustment[] = [
+    { kind: "place", shape: child, order, to: position(BigInt(before.length), grid.span.get(), grid.grows.get()) },
+  ];
+  return settle(grid, after, rulesOf(grid), new Set([child]), adjustments);
 }
 
-/** Closes the gaps the children the container `shape` has just lost leave in its grid, each child after one moving
- * back and a cell left empty going, drops their rules, then settles. Within the transaction that removed them. */
-export function removed(shape: any): void {
-  const grid = gridOf(shape);
-  const children = new Set([...shape.children].map((e: any) => e.child));
-  const cells = sequenceOf(grid).map((c) => cell(c.held.filter(([s]) => children.has(s)), c.grows));
-  const rules = rulesOf(grid).filter((r) => children.has(r.from_shape) && children.has(r.to_shape));
-  settle(grid, cells.filter((c) => c.held.length > 0), rules);
+/** Anticipates the removal of `child` from its container, before the mutation that removes it, which deletes it and
+ * its rules: it leaves its cell, the children after it move back one, a cell it leaves empty goes, and its rules are
+ * dropped; then settles. Returns the adjustments, in order. Within a transaction of its own, before the removal. */
+export function removing(child: any): Adjustment[] {
+  const grid = gridOfChild(child);
+  const [span, grows]: [bigint, string] = [grid.span.get(), grid.grows.get()];
+  const before = sequenceOf(grid);
+  const i = before.findIndex((c) => c.held.some(([s]) => s === child));
+  const [after] = without(before, child);
+  const adjustments: Adjustment[] = [{ kind: "leave", shape: child, from: position(BigInt(i), span, grows) }];
+  const moved = moves(before, after, span, grows);
+  adjustments.push(...moved);
+  const rules: Rule[] = [];
+  for (const r of rulesOf(grid)) {
+    if (r.from_shape === child || r.to_shape === child) adjustments.push(status(r, "dropped"));
+    else rules.push(r);
+  }
+  return settle(grid, after, rules, new Set(moved.map((m) => m.shape)), adjustments);
 }
 
 /** Takes the adjacency spec just added from `from_shape` to `to_shape` as its container's grid's last rule, and
- * settles. Returns whether the rule holds: a rule the grid cannot meet without breaking an earlier one is ignored.
- * Within the transaction that added the spec. */
-export function adjoined(from_shape: any, to_shape: any): boolean {
+ * settles. Returns the adjustments, in order, the new rule's status among them: held, met, or ignored where the grid
+ * cannot meet it without breaking an earlier one. Within the transaction that added the spec, or the next. */
+export function adjoined(from_shape: any, to_shape: any): Adjustment[] {
   const specs = [...from_shape.adjacent_to].filter((e: any) => e.to_shape === to_shape);
   const grid = gridOfChild(from_shape);
   const added = rule(from_shape, to_shape, specs[specs.length - 1].rotation.degrees.get(), false);
-  const rules = settle(grid, sequenceOf(grid), [...rulesOf(grid), added]);
-  return !(rules[rules.length - 1] as Rule).ignored;
+  added.new = true;
+  return settle(grid, sequenceOf(grid), [...rulesOf(grid), added], new Set(), []);
 }
 
 /** Drops the rules whose adjacency specs to `to_shape` were just removed, reverting it to its original insertion
  * position where one that held placed it: before the first cell whose first shape was placed after it. Then settles.
- * Within the transaction that removed the specs. */
-export function unjoined(to_shape: any): void {
+ * Returns the adjustments, in order. Within the transaction that removed the specs, or the next. */
+export function unjoined(to_shape: any): Adjustment[] {
   const grid = gridOfChild(to_shape);
   const specs: [any, number][] = [...to_shape.adjacent_from].map((e: any) => [e.from_shape, e.rotation.degrees.get()]);
   const rules: Rule[] = [];
@@ -180,14 +200,17 @@ export function unjoined(to_shape: any): void {
       rules.push(r);
     }
   }
-  let sequence = sequenceOf(grid);
+  const adjustments: Adjustment[] = dropped.map((r) => status(r, "dropped"));
+  const before = sequenceOf(grid);
+  let sequence = before;
   if (dropped.some((r) => !r.ignored)) {
     const [rest, held] = without(sequence, to_shape);
     const found = rest.findIndex((c) => (c.held[0] as Held)[1] > held[1]);
     rest.splice(found < 0 ? rest.length : found, 0, cell([held]));
     sequence = rest;
   }
-  settle(grid, sequence, rules);
+  const moved = moves(before, sequence, grid.span.get(), grid.grows.get());
+  return settle(grid, sequence, rules, new Set(moved.map((m) => m.shape)), [...adjustments, ...moved]);
 }
 
 /** The rules of the container `shape`'s grid that are ignored, in the order they reached it: each one's `from_shape`,
@@ -228,6 +251,7 @@ interface Rule {
   degrees: number;
   ignored: boolean;
   side: string;
+  new: boolean; // a rule just taken, which settling checks first
 }
 
 function cell(held: Held[], grows: string | null = null): Cell {
@@ -235,7 +259,7 @@ function cell(held: Held[], grows: string | null = null): Cell {
 }
 
 function rule(from_shape: any, to_shape: any, degrees: number, ignored: boolean): Rule {
-  return { from_shape, to_shape, degrees, ignored, side: quarter(degrees) };
+  return { from_shape, to_shape, degrees, ignored, side: quarter(degrees), new: false };
 }
 
 function repr(value: unknown): string {
@@ -295,10 +319,10 @@ function holds(sequence: Cell[], r: Rule, span: bigint, grows: string): boolean 
   return toRow - row === dr && toColumn - column === dc;
 }
 
-/** The sequence with `r` met by one change, breaking none of `kept`, or `null` where no change can: its `to_shape`
- * into the cell on its side of its `from_shape` that holds a shape a kept rule along the same side from it placed,
- * which it then shares, or else into a cell of its own there. */
-function meet(sequence: Cell[], r: Rule, kept: Rule[], span: bigint, grows: string): Cell[] | null {
+/** The sequence with `r` met by one change, and the moves it makes, breaking none of `kept` that those moves touch,
+ * or `null` where no change can: its `to_shape` into the cell on its side of its `from_shape` that holds a shape a
+ * kept rule along the same side from it placed, which it then shares, or else into a cell of its own there. */
+function meet(sequence: Cell[], r: Rule, kept: Rule[], span: bigint, grows: string): [Cell[], Adjustment[]] | null {
   const [rest, held] = without(sequence, r.to_shape);
   const i = indexOf(rest, r.from_shape);
   const step = STEPS[`${grows},${r.side}`] as string;
@@ -319,30 +343,73 @@ function meet(sequence: Cell[], r: Rule, kept: Rule[], span: bigint, grows: stri
     Record<string, boolean>)[step];
   if (fits) candidates.push([...rest.slice(0, Number(at)), cell([held]), ...rest.slice(Number(at))]);
   for (const candidate of candidates) {
-    if (holds(candidate, r, span, grows) && kept.every((k) => holds(candidate, k, span, grows))) return candidate;
+    const made = moves(sequence, candidate, span, grows);
+    const moved = new Set(made.map((m) => m.shape));
+    const touched = kept.filter((k) => moved.has(k.from_shape) || moved.has(k.to_shape));
+    if (holds(candidate, r, span, grows) && touched.every((k) => holds(candidate, k, span, grows))) {
+      return [candidate, made];
+    }
   }
   return null;
 }
 
-/** Settles the grid on `sequence` and `rules`, in the order they reached it: each rule kept where it holds, met by one
- * change that breaks no earlier kept rule where it does not, and ignored where none can. Writes the sequence and the
- * rules, and returns the rules. */
-function settle(grid: any, sequence: Cell[], rules: Rule[]): Rule[] {
+/** Settles the grid on `sequence` and `rules`, after a change that moved the shapes `touched`, and returns
+ * `adjustments` with what settling adjusts after them. The grid held every rule but the ignored before the change, so
+ * only the rules it touched, a new one and the ignored need checking, in the order they reached the grid: each kept
+ * where it holds, met by one change that breaks no earlier kept rule where it does not, and ignored where none can; the
+ * shapes a change moves are touched in turn, for the rules after it. Writes the sequence, the rules and the extents. */
+function settle(grid: any, sequence: Cell[], rules: Rule[], touched: Set<any>,
+  adjustments: Adjustment[]): Adjustment[] {
   const [span, grows]: [bigint, string] = [grid.span.get(), grid.grows.get()];
+  const extents = [grid.rows.get(), grid.columns.get()];
   const kept: Rule[] = [];
   for (const r of rules) {
+    if (!(r.new || r.ignored || touched.has(r.from_shape) || touched.has(r.to_shape))) {
+      kept.push(r); // untouched: it holds, as it did
+      continue;
+    }
+    const was = r.new ? null : r.ignored ? "ignored" : "held";
     if (holds(sequence, r, span, grows)) {
       r.ignored = false;
+      if (was !== "held") adjustments.push(status(r, r.new ? "held" : "met"));
     } else {
       const met = meet(sequence, r, kept, span, grows);
-      r.ignored = met === null;
-      if (met !== null) sequence = met;
+      if (met === null) {
+        r.ignored = true;
+        if (was !== "ignored") adjustments.push(status(r, "ignored"));
+      } else {
+        const [next, made] = met;
+        sequence = next;
+        r.ignored = false;
+        adjustments.push(...made, status(r, "met"));
+        for (const m of made) touched.add(m.shape);
+      }
     }
     if (!r.ignored) kept.push(r);
   }
   arrange(grid, sequence);
   record(grid, rules);
-  return rules;
+  if (grid.rows.get() !== extents[0] || grid.columns.get() !== extents[1]) {
+    adjustments.push({ kind: "extents", rows: grid.rows.get(), columns: grid.columns.get() });
+  }
+  return adjustments;
+}
+
+/** The moves that take the shapes of `before` to their cells in `after`, in the order of `after`: each shape in both
+ * whose cell changed. */
+function moves(before: Cell[], after: Cell[], span: bigint, grows: string): Adjustment[] {
+  const was = new Map(before.flatMap((c, i) => c.held.map(([s]): [any, [bigint, bigint]] =>
+    [s, position(BigInt(i), span, grows)])));
+  return after.flatMap((c, i) => c.held.flatMap(([s]) => {
+    const from = was.get(s);
+    const to = position(BigInt(i), span, grows);
+    return from !== undefined && (from[0] !== to[0] || from[1] !== to[1]) ? [{ kind: "move", shape: s, from, to }] : [];
+  }));
+}
+
+/** The adjustment that gives `r` its `status`: held, met, ignored or dropped. */
+function status(r: Rule, s: string): Adjustment {
+  return { kind: "rule", from_shape: r.from_shape, to_shape: r.to_shape, degrees: r.degrees, status: s };
 }
 
 /** Makes the grid's rules `rules`, in order, writing only where they change. */

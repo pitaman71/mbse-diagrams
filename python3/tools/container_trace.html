@@ -6,62 +6,71 @@
 <title>Container Trace</title>
 <style>
 :root {
-  --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #d9d9d3;
-  --cell: #ffffff; --slot: #eeeeea; --accent: #2f6fd6; --changed: #fff2c2; --changed-line: #d9a400;
-  --kept: #2f6fd6; --ignored: #c8372d; --error: #c8372d; --ok: #2b8a3e;
+  --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #d9d9d3; --slot: #eeeeea;
+  --cell: #ffffff; --accent: #2f6fd6; --hl: #fff2c2; --hl-line: #d9a400; --gone: #c8372d; --kept: #2f6fd6;
+  --ignored: #c8372d; --ok: #2b8a3e; --code: #f1f1ee;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #161615; --panel: #1f1f1d; --ink: #ececea; --muted: #9a9a94; --line: #3a3a37;
-    --cell: #262624; --slot: #222220; --accent: #6ea2ff; --changed: #4a3d10; --changed-line: #e0b62e;
-    --kept: #6ea2ff; --ignored: #ff7b70; --error: #ff7b70; --ok: #5fcf78;
+    --bg: #161615; --panel: #1f1f1d; --ink: #ececea; --muted: #9a9a94; --line: #3a3a37; --slot: #222220;
+    --cell: #262624; --accent: #6ea2ff; --hl: #4a3d10; --hl-line: #e0b62e; --gone: #ff7b70; --kept: #6ea2ff;
+    --ignored: #ff7b70; --ok: #5fcf78; --code: #262624;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #161615; --panel: #1f1f1d; --ink: #ececea; --muted: #9a9a94; --line: #3a3a37;
-  --cell: #262624; --slot: #222220; --accent: #6ea2ff; --changed: #4a3d10; --changed-line: #e0b62e;
-  --kept: #6ea2ff; --ignored: #ff7b70; --error: #ff7b70; --ok: #5fcf78;
+  --bg: #161615; --panel: #1f1f1d; --ink: #ececea; --muted: #9a9a94; --line: #3a3a37; --slot: #222220;
+  --cell: #262624; --accent: #6ea2ff; --hl: #4a3d10; --hl-line: #e0b62e; --gone: #ff7b70; --kept: #6ea2ff;
+  --ignored: #ff7b70; --ok: #5fcf78; --code: #262624;
 }
 * { box-sizing: border-box; }
+html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, sans-serif; }
-.app { display: grid; grid-template-columns: 300px 1fr; min-height: 100vh; }
-nav { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; max-height: 100vh; position: sticky; top: 0; }
+.app { display: grid; grid-template-columns: 210px 1fr; height: 100vh; }
+nav { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; }
 nav h1 { font-size: 15px; margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--line); }
-nav .notebook { padding: 10px 16px 4px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+nav .notebook { padding: 10px 16px 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 nav button { display: block; width: 100%; text-align: left; border: 0; background: none; color: inherit; font: inherit;
-  padding: 6px 16px; cursor: pointer; }
+  padding: 5px 16px; cursor: pointer; }
 nav button:hover { background: var(--slot); }
 nav button.on { background: var(--accent); color: #fff; }
-nav button .n { float: right; opacity: .7; font-variant-numeric: tabular-nums; }
-main { padding: 20px 24px; min-width: 0; }
-.head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
-.head h2 { margin: 0; font-size: 18px; }
-.head .case { color: var(--muted); }
-.controls { display: flex; gap: 8px; align-items: center; margin: 14px 0; flex-wrap: wrap; }
-.controls button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); background: var(--panel); color: inherit;
+nav button .n { float: right; opacity: .7; font-size: 12px; font-variant-numeric: tabular-nums; }
+main { display: grid; grid-template-rows: auto 1fr; min-width: 0; min-height: 0; }
+header { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+header h2 { margin: 0; font-size: 15px; }
+header .case { color: var(--muted); flex: 1 1 300px; }
+header button { font: inherit; padding: 4px 10px; border: 1px solid var(--line); background: var(--panel); color: inherit;
   border-radius: 6px; cursor: pointer; }
-.controls button:disabled { opacity: .4; cursor: default; }
-.controls .pos { color: var(--muted); font-variant-numeric: tabular-nums; }
-.call { font: 15px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 10px 12px; background: var(--panel);
-  border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; }
-.badge { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 10px; font-size: 12px; color: #fff; }
-.badge.true { background: var(--ok); } .badge.false { background: var(--ignored); } .badge.error { background: var(--error); }
-.error { color: var(--error); margin-top: 6px; font: 13px ui-monospace, monospace; }
-.grids { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 16px; }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
-.panel h3 { margin: 0 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
-.panel .meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
-.panel svg { display: block; max-width: 100%; height: auto; }
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
-th { color: var(--muted); font-weight: 600; }
-tr.ignored td { color: var(--ignored); }
+header button:disabled { opacity: .4; cursor: default; }
+header .pos { color: var(--muted); font-variant-numeric: tabular-nums; }
+.columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 10px; min-height: 0; }
+.column { display: grid; grid-template-rows: 3fr 1fr; gap: 10px; min-height: 0; min-width: 0; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow: auto; min-height: 0; }
+.panel h3 { margin: 0 0 8px; font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.tree { list-style: none; margin: 0; padding: 0; font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tree ul { list-style: none; margin: 0; padding-left: 18px; }
+.hl { background: var(--hl); outline: 1px solid var(--hl-line); border-radius: 3px; padding: 0 2px; }
+.gone { color: var(--gone); text-decoration: line-through; }
+.muted { color: var(--muted); }
 .empty { color: var(--muted); font-style: italic; }
-.keys { color: var(--muted); font-size: 12px; margin-top: 20px; }
-@media (max-width: 720px) {
-  .app { grid-template-columns: 1fr; }
-  nav { position: static; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--line); }
-  main { padding: 16px; }
+table { border-collapse: collapse; width: 100%; font: 12px/1.5 ui-monospace, monospace; }
+th, td { text-align: left; padding: 2px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-family: system-ui, sans-serif; }
+tr.ignored td { color: var(--ignored); }
+tr.hl td, td.hl { background: var(--hl); }
+.change .what { font: 15px/1.4 ui-monospace, monospace; }
+.change .sub { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.badge { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; color: #fff; margin-left: 6px; font-family: system-ui, sans-serif; }
+.badge.held, .badge.met { background: var(--ok); }
+.badge.ignored, .badge.dropped, .badge.error { background: var(--ignored); }
+details { margin-top: 6px; }
+summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+pre { background: var(--code); padding: 6px 8px; border-radius: 6px; font-size: 11px; max-height: 140px; overflow: auto; margin: 4px 0 0; }
+svg { display: block; max-width: 100%; height: auto; }
+@media (max-width: 1000px) {
+  .app { grid-template-columns: 1fr; height: auto; }
+  nav { max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--line); }
+  .columns { grid-template-columns: 1fr; }
+  .column { grid-template-rows: auto auto; }
 }
 </style>
 </head>
@@ -69,155 +78,274 @@ tr.ignored td { color: var(--ignored); }
 <div class="app">
   <nav id="nav"><h1>Container trace</h1></nav>
   <main>
-    <div class="head"><h2 id="title"></h2><span class="case" id="case"></span></div>
-    <div class="controls">
-      <button id="prev" title="Previous step (←)">← Step</button>
-      <button id="next" title="Next step (→)">Step →</button>
+    <header>
+      <h2 id="title"></h2><span class="case" id="case"></span>
+      <button id="prev" title="Previous adjustment (←); ↑ the previous mutation">←</button>
+      <button id="next" title="Next adjustment (→); ↓ the next mutation">→</button>
       <span class="pos" id="pos"></span>
+    </header>
+    <div class="columns">
+      <div class="column">
+        <section class="panel"><h3>Data model</h3><div id="data"></div></section>
+        <section class="panel change"><h3>Mutation</h3><div id="mutation"></div></section>
+      </div>
+      <div class="column">
+        <section class="panel"><h3>Container model</h3><div id="model"></div></section>
+        <section class="panel change"><h3>Adjustment</h3><div id="adjustment"></div></section>
+      </div>
+      <div class="column">
+        <section class="panel"><h3>Container layout</h3><div id="layout"></div></section>
+        <section class="panel change"><h3>Effect on the layout</h3><div id="effect"></div></section>
+      </div>
     </div>
-    <div class="call" id="call"></div>
-    <div class="error" id="error"></div>
-    <div class="grids">
-      <div class="panel"><h3>Before</h3><div class="meta" id="before-meta"></div><div id="before"></div></div>
-      <div class="panel"><h3>After</h3><div class="meta" id="after-meta"></div><div id="after"></div></div>
-    </div>
-    <div class="panel" style="margin-top:16px"><h3>Rules, in the order they reached the grid</h3><div id="rules"></div></div>
-    <p class="keys">← → step through the calls of a case, and on into the next · ↑ ↓ previous and next case ·
-      a solid arrow is a rule that holds; a dashed one points where an ignored rule wants its shape · the small number
-      beside a shape is its original insertion position · a highlighted cell changed in this step</p>
   </main>
 </div>
 <script>
 const TRACE = /*TRACE*/null;
+// A position is a case, a mutation in it, and one of that mutation's adjustments; a mutation with none is shown once.
 const cases = [];
-for (const nb of TRACE.notebooks) for (const c of nb.cases) if (c.steps.length) cases.push({ nb, c });
-let at = { k: 0, s: 0 };
+for (const nb of TRACE.notebooks) for (const c of nb.cases) cases.push({ nb, c });
+let at = { k: 0, m: 0, a: 0 };
+const count = (step) => Math.max(step.adjustments.length, 1);
 
 const nav = document.getElementById("nav");
 let last = null;
 cases.forEach(({ nb, c }, k) => {
   if (nb !== last) {
     const d = document.createElement("div");
-    d.className = "notebook"; d.textContent = nb.title;
-    nav.appendChild(d); last = nb;
+    d.className = "notebook"; d.textContent = nb.title; nav.appendChild(d); last = nb;
   }
   const b = document.createElement("button");
   b.innerHTML = `${c.id} <span class="n">${c.steps.length}</span>`;
-  b.title = c.title;
-  b.onclick = () => go(k, 0);
-  b.dataset.k = k;
+  b.title = c.title; b.dataset.k = k; b.onclick = () => go({ k, m: 0, a: 0 });
   nav.appendChild(b);
 });
 
-const W = 104, H = 62, G = 14, P = 52; // room around the grid for an ignored rule's stub
 const esc = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
-const key = (cell) => cell.shapes.map((s) => s.name).join("|") + "/" + cell.grows;
+const pos = (p) => `(${p[0]},${p[1]})`;
+const cellKey = (p) => `${p[0]},${p[1]}`;
+const quarter = (d) => ["north", "east", "south", "west"][Math.floor(((((d % 360) + 360) % 360) + 45) / 90) % 4];
 
-function grid(state, other, highlight) {
+function adjustmentText(a) {
+  if (!a) return '<span class="empty">none: the container layout does not follow this mutation</span>';
+  switch (a.kind) {
+    case "grid": return `grid made: ${a.span} wide, growing ${a.grows}, its cells turned ${a.cell_rotation}°`;
+    case "rotate": return `cells turned to ${a.degrees}°`;
+    case "place": return `place <b>${esc(a.shape)}</b> in ${pos(a.to)}, its order ${a.order}`;
+    case "move": return `move <b>${esc(a.shape)}</b> ${pos(a.from)} → ${pos(a.to)}`;
+    case "leave": return `<b>${esc(a.shape)}</b> leaves ${pos(a.from)}`;
+    case "rule": return `rule ${esc(a.from_shape)} → ${esc(a.to_shape)}, ${a.degrees}° ${quarter(a.degrees)}<span class="badge ${a.status}">${a.status}</span>`;
+    case "extents": return `extents now ${a.rows} × ${a.columns}`;
+  }
+  return esc(JSON.stringify(a));
+}
+
+function effectText(a, state) {
+  if (!a) return '<span class="empty">the layout is unchanged</span>';
+  switch (a.kind) {
+    case "grid": return "an empty grid appears";
+    case "rotate": return `the grid's cells, and the shapes in them, turn to ${a.degrees}° from the container's compass`;
+    case "place": return `${esc(a.shape)} appears at ${pos(a.to)}`;
+    case "move": {
+      const shared = state && (state.cells[cellKey(a.to)] || []).length > 1;
+      return `${esc(a.shape)} moves from ${pos(a.from)} to ${pos(a.to)}${shared ? ", sharing that cell" : ""}`;
+    }
+    case "leave": return `${esc(a.shape)} disappears from ${pos(a.from)}`;
+    case "rule":
+      return { held: "a solid arrow appears: the rule holds where its shapes already are",
+               met: "the arrow is solid: the moves before this one met the rule",
+               ignored: "a dashed arrow points where the rule wants its shape: ignored, and queued",
+               dropped: "the rule's arrow goes" }[a.status];
+    case "extents": return `the grid is now ${a.rows} rows by ${a.columns} columns`;
+  }
+  return "";
+}
+
+function dataView(before, after) {
+  const shown = after || before;
+  if (!shown) return '<p class="empty">no container yet</p>';
+  const was = new Map((before ? before.children : []).map((c) => [c.name, c]));
+  const now = new Map((after ? after.children : []).map((c) => [c.name, c]));
+  const names = (after ? after.children : []).map((c) => c.name);
+  (before ? before.children : []).forEach((c, i) => { if (!now.has(c.name)) names.splice(i, 0, c.name); });
+  const specKey = (s) => `${s.to}|${s.degrees}`;
+  let html = `<ul class="tree"><li><b>${esc(shown.container)}</b> <span class="muted">· its children, in order</span><ul>`;
+  if (!names.length) html += '<li class="empty">none</li>';
+  for (const name of names) {
+    const b = was.get(name), a = now.get(name);
+    html += `<li><span class="${!b ? "hl" : !a ? "gone" : ""}">${esc(name)}</span>`;
+    const specs = new Map([...(b ? b.specs : []), ...(a ? a.specs : [])].map((s) => [specKey(s), s]));
+    if (specs.size) {
+      html += "<ul>";
+      for (const [key, s] of specs) {
+        const inB = b && b.specs.some((x) => specKey(x) === key), inA = a && a.specs.some((x) => specKey(x) === key);
+        html += `<li><span class="${!inB ? "hl" : !inA ? "gone" : ""}">spec → ${esc(s.to)} <span class="muted">${s.degrees}° ${s.side}</span></span></li>`;
+      }
+      html += "</ul>";
+    }
+    html += "</li>";
+  }
+  return html + "</ul></li></ul>";
+}
+
+function touched(a) {
+  const cells = new Set(), shapes = new Set();
+  if (!a) return { cells, shapes, rule: null, grid: false };
+  for (const p of [a.from, a.to]) if (p) cells.add(cellKey(p));
+  if (a.shape && a.kind !== "grid") shapes.add(a.shape);
+  return { cells, shapes, rule: a.kind === "rule" ? [a.from_shape, a.to_shape, a.degrees] : null,
+           grid: ["grid", "extents", "rotate"].includes(a.kind) };
+}
+
+function modelView(state, a) {
   if (!state) return '<p class="empty">no grid</p>';
-  const rows = Math.max(state.rows, ...state.cells.map((c) => c.row + 1), 1);
-  const cols = Math.max(state.columns, ...state.cells.map((c) => c.column + 1), 1);
+  const t = touched(a);
+  let html = `<table><tr><th>grid</th><td class="${t.grid ? "hl" : ""}">grows ${state.grows}, span ${state.span}<br>` +
+    `extents ${state.rows} × ${state.columns} · ${state.inserted} inserted<br>cells turned ${state.cell_rotation}°</td></tr></table>`;
+  const keys = Object.keys(state.cells).sort((x, y) => {
+    const [r1, c1] = x.split(",").map(Number), [r2, c2] = y.split(",").map(Number);
+    return r1 - r2 || c1 - c2;
+  });
+  html += '<h3 style="margin-top:12px">Cells</h3>';
+  if (!keys.length) html += '<p class="empty">none</p>';
+  else {
+    html += "<table><tr><th>cell</th><th>holds, with each one's order</th><th>as a container</th></tr>";
+    for (const key of keys) {
+      const held = state.cells[key];
+      const axis = held.length > 1 ? `grows ${state.grows}, ${state.grows === "rows" ? held.length + " × 1" : "1 × " + held.length}` : "";
+      const shapes = held.map(([n, o]) => `${t.shapes.has(n) ? "<b>" + esc(n) + "</b>" : esc(n)} <span class="muted">${o}</span>`).join(", ");
+      html += `<tr class="${t.cells.has(key) ? "hl" : ""}"><td>(${key})</td><td>${shapes}</td><td>${axis}</td></tr>`;
+    }
+    html += "</table>";
+  }
+  html += '<h3 style="margin-top:12px">Rules, in the order they reached the grid</h3>';
+  if (!state.rules.length) html += '<p class="empty">none</p>';
+  else {
+    html += "<table><tr><th>#</th><th>rule</th><th></th></tr>";
+    state.rules.forEach((r, i) => {
+      const on = t.rule && r[0] === t.rule[0] && r[1] === t.rule[1] && r[2] === t.rule[2];
+      html += `<tr class="${r[3] ? "ignored" : ""}${on ? " hl" : ""}"><td>${i + 1}</td><td>${esc(r[0])} → ${esc(r[1])}, ${r[2]}° ${quarter(r[2])}</td><td>${r[3] ? "ignored" : "holds"}</td></tr>`;
+    });
+    html += "</table>";
+  }
+  return html;
+}
+
+const W = 92, H = 56, G = 12, P = 46;
+const SIDES = { north: [0, -1], east: [1, 0], south: [0, 1], west: [-1, 0] };
+
+function layoutView(state, a) {
+  if (!state) return '<p class="empty">no grid</p>';
+  const t = touched(a);
+  const placed = Object.keys(state.cells).map((k) => k.split(",").map(Number));
+  const rows = Math.max(state.rows, ...placed.map((p) => p[0] + 1), 1);
+  const cols = Math.max(state.columns, ...placed.map((p) => p[1] + 1), 1);
   const w = P * 2 + cols * W + (cols - 1) * G, h = P * 2 + rows * H + (rows - 1) * G;
   const x = (c) => P + c * (W + G), y = (r) => P + r * (H + G);
-  const before = new Map((other ? other.cells : []).map((c) => [`${c.row},${c.column}`, key(c)]));
   const where = new Map();
-  let svg = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="grid of ${state.container}">`;
-  svg += `<defs><marker id="arrow-kept" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--kept)"/></marker>`;
-  svg += `<marker id="arrow-ignored" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ignored)"/></marker></defs>`;
+  let svg = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="the container layout">`;
+  svg += "<defs>" + ["kept", "ignored"].map((k) => `<marker id="arrow-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${k})"/></marker>`).join("") + "</defs>";
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-    svg += `<rect x="${x(c)}" y="${y(r)}" width="${W}" height="${H}" rx="6" fill="var(--slot)"/>`;
+    const on = t.cells.has(`${r},${c}`) && !state.cells[`${r},${c}`];
+    svg += `<rect x="${x(c)}" y="${y(r)}" width="${W}" height="${H}" rx="6" fill="var(--slot)" stroke="${on ? "var(--hl-line)" : "none"}" stroke-width="2" stroke-dasharray="${on ? "4 3" : "0"}"/>`;
   }
-  for (const cell of state.cells) {
-    const changed = highlight && before.get(`${cell.row},${cell.column}`) !== key(cell);
-    svg += `<rect x="${x(cell.column)}" y="${y(cell.row)}" width="${W}" height="${H}" rx="6" fill="${changed ? "var(--changed)" : "var(--cell)"}" stroke="${changed ? "var(--changed-line)" : "var(--line)"}" stroke-width="${changed ? 2 : 1}"/>`;
-    const n = cell.shapes.length;
-    cell.shapes.forEach((s, i) => {
-      const down = cell.grows === "rows" || n === 1;
-      const cx = x(cell.column) + (down ? W / 2 : W * (i + 0.5) / n);
-      const cy = y(cell.row) + (down ? 10 + (H - 12) * (i + 0.5) / n : H / 2 + 4); // below the cell's label
-      where.set(s.name, [cx, cy]);
-      svg += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="var(--ink)" font-size="${n > 2 ? 12 : 15}" font-weight="600">${esc(s.name)}<tspan fill="var(--muted)" font-size="10" font-weight="400"> ${s.order}</tspan></text>`;
+  for (const [key, held] of Object.entries(state.cells)) {
+    const [r, c] = key.split(",").map(Number);
+    const on = t.cells.has(key);
+    svg += `<rect x="${x(c)}" y="${y(r)}" width="${W}" height="${H}" rx="6" fill="${on ? "var(--hl)" : "var(--cell)"}" stroke="${on ? "var(--hl-line)" : "var(--line)"}" stroke-width="${on ? 2 : 1}"/>`;
+    svg += `<text x="${x(c) + 5}" y="${y(r) + 11}" fill="var(--muted)" font-size="9">${r},${c}</text>`;
+    const n = held.length, down = state.grows === "rows" || n === 1;
+    held.forEach(([name, order], i) => {
+      const cx = x(c) + (down ? W / 2 : W * (i + 0.5) / n), cy = y(r) + (down ? 10 + (H - 12) * (i + 0.5) / n : H / 2 + 4);
+      where.set(name, [cx, cy]);
+      svg += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" fill="var(--ink)" font-size="${n > 2 ? 12 : 15}" font-weight="${t.shapes.has(name) ? 800 : 600}">${esc(name)}<tspan fill="var(--muted)" font-size="10" font-weight="400"> ${order}</tspan></text>`;
     });
-    svg += `<text x="${x(cell.column) + 5}" y="${y(cell.row) + 11}" fill="var(--muted)" font-size="9">${cell.row},${cell.column}${n > 1 ? " · " + cell.grows : ""}</text>`;
   }
-  const SIDES = { north: [0, -1], east: [1, 0], south: [0, 1], west: [-1, 0] };
   const stubs = new Map();
-  for (const rule of state.rules) {
-    const a = where.get(rule.from), b = where.get(rule.to);
-    if (!a || !b) continue;
-    if (rule.ignored) { // where the rule wants its shape, not where it is
-      const [ux, uy] = SIDES[rule.side];
-      const n = stubs.get(rule.from + rule.side) || 0;
-      stubs.set(rule.from + rule.side, n + 1);
+  for (const [from, to, degrees, ignored] of state.rules) {
+    const p = where.get(from), q = where.get(to);
+    if (!p || !q) continue;
+    const side = quarter(degrees);
+    const on = t.rule && t.rule[0] === from && t.rule[1] === to && t.rule[2] === degrees;
+    if (ignored) { // where the rule wants its shape, not where it is
+      const [ux, uy] = SIDES[side];
+      const n = stubs.get(from + side) || 0; stubs.set(from + side, n + 1);
       const off = (n % 2 ? -1 : 1) * Math.ceil(n / 2) * 9;
-      const [sx, sy] = [a[0] + ux * 16 - uy * off, a[1] + uy * 16 + ux * off];
+      const [sx, sy] = [p[0] + ux * 16 - uy * off, p[1] + uy * 16 + ux * off];
       const reach = ux ? W / 2 + G / 2 : H / 2 + G / 2;
       const [ex, ey] = [sx + ux * reach, sy + uy * reach];
-      svg += `<line x1="${sx}" y1="${sy}" x2="${ex}" y2="${ey}" stroke="var(--ignored)" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#arrow-ignored)"><title>${esc(rule.from)} → ${esc(rule.to)}: ${rule.side}, ignored</title></line>`;
-      svg += `<text x="${ex + ux * 8 + (ux ? 0 : 6)}" y="${ey + uy * 10 + (uy ? 0 : -4)}" text-anchor="${ux > 0 ? "start" : ux < 0 ? "end" : "start"}" fill="var(--ignored)" font-size="11" font-weight="600">${esc(rule.to)}</text>`;
+      svg += `<line x1="${sx}" y1="${sy}" x2="${ex}" y2="${ey}" stroke="var(--ignored)" stroke-width="${on ? 3 : 2}" stroke-dasharray="4 3" marker-end="url(#arrow-ignored)"><title>${esc(from)} → ${esc(to)}: ${side}, ignored</title></line>`;
+      svg += `<text x="${ex + ux * 8 + (ux ? 0 : 6)}" y="${ey + uy * 10 + (uy ? 0 : -4)}" text-anchor="${ux < 0 ? "end" : "start"}" fill="var(--ignored)" font-size="11" font-weight="600">${esc(to)}</text>`;
       continue;
     }
-    const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1;
-    const t = 16;
-    const [x1, y1, x2, y2] = [a[0] + dx / len * t, a[1] + dy / len * t, b[0] - dx / len * t, b[1] - dy / len * t];
-    svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--kept)" stroke-width="2" marker-end="url(#arrow-kept)"><title>${esc(rule.from)} → ${esc(rule.to)}: ${rule.side}</title></line>`;
+    const dx = q[0] - p[0], dy = q[1] - p[1], len = Math.hypot(dx, dy) || 1, s = 16;
+    svg += `<line x1="${p[0] + dx / len * s}" y1="${p[1] + dy / len * s}" x2="${q[0] - dx / len * s}" y2="${q[1] - dy / len * s}" stroke="var(--kept)" stroke-width="${on ? 3 : 2}" marker-end="url(#arrow-kept)"><title>${esc(from)} → ${esc(to)}: ${side}</title></line>`;
   }
   return svg + "</svg>";
 }
 
-function meta(state) {
-  if (!state) return "";
-  return `${esc(state.container)} · grows ${state.grows}, span ${state.span} · ${state.rows} × ${state.columns} · ` +
-    `${state.inserted} inserted · cells turned ${state.cell_rotation}°`;
-}
-
-function rules(state) {
-  if (!state || !state.rules.length) return '<p class="empty">none</p>';
-  return "<table><tr><th>#</th><th>from</th><th>to</th><th>degrees</th><th>side</th><th></th></tr>" +
-    state.rules.map((r, i) => `<tr class="${r.ignored ? "ignored" : ""}"><td>${i + 1}</td><td>${esc(r.from)}</td>` +
-      `<td>${esc(r.to)}</td><td>${r.degrees}</td><td>${r.side}</td><td>${r.ignored ? "ignored" : "holds"}</td></tr>`).join("") +
-    "</table>";
-}
-
 function show() {
-  const { nb, c } = cases[at.k], step = c.steps[at.s];
+  const { nb, c } = cases[at.k], step = c.steps[at.m];
+  const a = step.adjustments[at.a] || null;
+  const state = step.adjustments.length ? step.states[at.a] : step.model_before;
   document.getElementById("title").textContent = nb.title;
   document.getElementById("case").textContent = `${c.id} · ${c.title}`;
-  document.getElementById("pos").textContent = `step ${at.s + 1} of ${c.steps.length}`;
-  const badge = step.error ? '<span class="badge error">raised</span>'
-    : step.result === null || step.result === undefined ? "" : `<span class="badge ${step.result}">${step.result ? "held" : "ignored"}</span>`;
-  document.getElementById("call").innerHTML = esc(step.call) + badge;
-  document.getElementById("error").textContent = step.error || "";
-  document.getElementById("before").innerHTML = grid(step.before, null, false);
-  document.getElementById("after").innerHTML = grid(step.after, step.before, true);
-  document.getElementById("before-meta").innerHTML = meta(step.before);
-  document.getElementById("after-meta").innerHTML = meta(step.after);
-  document.getElementById("rules").innerHTML = rules(step.after);
-  document.getElementById("prev").disabled = at.k === 0 && at.s === 0;
-  document.getElementById("next").disabled = at.k === cases.length - 1 && at.s === c.steps.length - 1;
+  document.getElementById("pos").textContent = `mutation ${at.m + 1} of ${c.steps.length} · ` +
+    `adjustment ${step.adjustments.length ? at.a + 1 : 0} of ${step.adjustments.length}`;
+  document.getElementById("data").innerHTML = dataView(step.data_before, step.data_after);
+  document.getElementById("mutation").innerHTML = `<div class="what">${esc(step.mutation)}</div>` +
+    (step.kind === "unchild" ? '<div class="sub">anticipated: the container layout adjusts first, while what the mutation deletes still exists</div>' : "") +
+    `<details><summary>the transaction expression, as journalled</summary><pre>${esc(JSON.stringify(step.expression, null, 1))}</pre></details>`;
+  document.getElementById("model").innerHTML = modelView(state, a);
+  document.getElementById("adjustment").innerHTML = step.error
+    ? `<div class="what">refused<span class="badge error">error</span></div><div class="sub">${esc(step.error)}</div>`
+    : `<div class="what">${adjustmentText(a)}</div>` +
+      (step.adjustments.length ? `<div class="sub">${at.a + 1} of ${step.adjustments.length} for this mutation</div>` : "");
+  document.getElementById("layout").innerHTML = layoutView(state, a);
+  document.getElementById("effect").innerHTML = step.error ? '<span class="empty">the layout is unchanged</span>' : effectText(a, state);
+  const lastCase = at.k === cases.length - 1, lastStep = at.m === c.steps.length - 1;
+  document.getElementById("prev").disabled = at.k === 0 && at.m === 0 && at.a === 0;
+  document.getElementById("next").disabled = lastCase && lastStep && at.a === count(step) - 1;
   for (const b of nav.querySelectorAll("button")) b.classList.toggle("on", +b.dataset.k === at.k);
-  try { localStorage.setItem("container-trace", JSON.stringify(at)); } catch (e) { /* storage unavailable */ }
+  try { localStorage.setItem("container-trace-2", JSON.stringify(at)); } catch (e) { /* storage unavailable */ }
 }
 
-function go(k, s) { at = { k, s }; show(); nav.querySelector(`button[data-k="${k}"]`).scrollIntoView({ block: "nearest" }); }
-function step(d) {
-  let { k, s } = at;
-  s += d;
-  if (s < 0) { if (k === 0) return; k -= 1; s = cases[k].c.steps.length - 1; }
-  if (s >= cases[k].c.steps.length) { if (k === cases.length - 1) return; k += 1; s = 0; }
-  go(k, s);
+function go(p) {
+  at = p; show();
+  const b = nav.querySelector(`button[data-k="${p.k}"]`);
+  if (b) b.scrollIntoView({ block: "nearest" });
 }
-document.getElementById("prev").onclick = () => step(-1);
-document.getElementById("next").onclick = () => step(1);
+function move(d) {
+  let { k, m, a } = at;
+  a += d;
+  if (a < 0) {
+    m -= 1;
+    if (m < 0) { if (k === 0) return; k -= 1; m = cases[k].c.steps.length - 1; }
+    a = count(cases[k].c.steps[m]) - 1;
+  } else if (a >= count(cases[k].c.steps[m])) {
+    m += 1; a = 0;
+    if (m >= cases[k].c.steps.length) { if (k === cases.length - 1) return; k += 1; m = 0; }
+  }
+  go({ k, m, a });
+}
+function jump(d) {
+  let { k, m } = at;
+  m += d;
+  if (m < 0) { if (k === 0) return; k -= 1; m = cases[k].c.steps.length - 1; }
+  if (m >= cases[k].c.steps.length) { if (k === cases.length - 1) return; k += 1; m = 0; }
+  go({ k, m, a: 0 });
+}
+document.getElementById("prev").onclick = () => move(-1);
+document.getElementById("next").onclick = () => move(1);
 document.addEventListener("keydown", (e) => {
-  if (e.key === "ArrowRight") { step(1); e.preventDefault(); }
-  if (e.key === "ArrowLeft") { step(-1); e.preventDefault(); }
-  if (e.key === "ArrowDown" && at.k < cases.length - 1) { go(at.k + 1, 0); e.preventDefault(); }
-  if (e.key === "ArrowUp" && at.k > 0) { go(at.k - 1, 0); e.preventDefault(); }
+  const keys = { ArrowRight: () => move(1), ArrowLeft: () => move(-1), ArrowDown: () => jump(1), ArrowUp: () => jump(-1),
+    PageDown: () => at.k < cases.length - 1 && go({ k: at.k + 1, m: 0, a: 0 }),
+    PageUp: () => at.k > 0 && go({ k: at.k - 1, m: 0, a: 0 }) };
+  if (keys[e.key]) { keys[e.key](); e.preventDefault(); }
 });
 try {
-  const saved = JSON.parse(localStorage.getItem("container-trace"));
-  if (saved && cases[saved.k] && cases[saved.k].c.steps[saved.s]) at = saved;
+  const saved = JSON.parse(localStorage.getItem("container-trace-2"));
+  if (saved && cases[saved.k] && cases[saved.k].c.steps[saved.m] && saved.a < count(cases[saved.k].c.steps[saved.m])) at = saved;
 } catch (e) { /* storage unavailable */ }
 show();
 </script>

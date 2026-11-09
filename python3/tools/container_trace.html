@@ -76,11 +76,13 @@ svg { display: block; max-width: 100%; height: auto; }
 .chip.placement { border-style: dashed; }
 .chip.refused { color: var(--ignored); border-color: var(--ignored); }
 .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; border-style: solid; }
-.toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin: -3px 0 8px; }
+.toggle { display: inline-flex; align-self: flex-start; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin: -3px 0 8px; }
 .toggle button { font: 600 11px system-ui, sans-serif; text-transform: uppercase; letter-spacing: .05em; padding: 4px 10px;
   border: 0; background: none; color: var(--muted); cursor: pointer; }
 .toggle button.on { background: var(--accent); color: #fff; }
-svg.physical { width: 100%; height: auto; max-height: 100%; }
+#layout-panel { display: flex; flex-direction: column; }
+#layout { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+svg.physical { flex: 1; min-height: 0; width: 100%; height: 100%; } /* scaled to the panel, both ways */
 .legend { color: var(--muted); font-size: 11px; margin-top: 6px; }
 @media (max-width: 1000px) {
   .app { grid-template-columns: 1fr; height: auto; }
@@ -111,7 +113,7 @@ svg.physical { width: 100%; height: auto; max-height: 100%; }
         <section class="panel change"><h3>Adjustment</h3><div id="adjustment"></div></section>
       </div>
       <div class="column">
-        <section class="panel">
+        <section class="panel" id="layout-panel">
           <div class="toggle" role="group" aria-label="the layout shown">
             <button id="show-container" aria-pressed="true">Container layout</button>
             <button id="show-physical" aria-pressed="false">Physical layout</button>
@@ -379,8 +381,9 @@ function physicalView(items, changed) {
                   cell: ["var(--slot)", "none", "0", 1], shape: ["none", "var(--ink)", "0", 1.5] };
   for (const i of frames) { // in the diagram's own order: each container before what it holds
     svg += rect(i, ...STYLE[i.kind]);
-    if (i.kind === "shape") {
-      svg += `<text x="${i.at[0] + i.size[0] / 2}" y="${i.at[1] + font * 1.05}" text-anchor="middle" font-size="${font}" fill="${changed.has(i.key) ? "var(--hl-line)" : "var(--ink)"}" font-weight="${changed.has(i.key) ? 800 : 600}">${esc(i.label)}</text>`;
+    if (i.kind === "shape") { // its title, in the band its layout keeps for it: as high as the band, less a little
+      const band = i.title || font;
+      svg += `<text x="${i.at[0] + i.size[0] / 2}" y="${i.at[1] + band * 0.78}" text-anchor="middle" font-size="${band * 0.8}" fill="${changed.has(i.key) ? "var(--hl-line)" : "var(--ink)"}" font-weight="${changed.has(i.key) ? 800 : 600}">${esc(i.label)}</text>`;
     }
   }
   for (const i of items.filter((p) => p.kind === "point")) {

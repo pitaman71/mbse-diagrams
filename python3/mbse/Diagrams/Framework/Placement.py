@@ -15,12 +15,13 @@ The rules, as constraints (`required` unless said):
 
 - Units. The diagram's unit length is its `unit_length`; a shape's, its container's times the diagram's
   `scaling_factor`; a shape's grid and cells share its unit length. The `margin`, collapsing, is the same number of
-  diagram units at every level; the `minimum_size` a shape's least width and height, in units of its level.
+  diagram units at every level; the `minimum_size` a shape's least width and height, in units of its level; the
+  `title_size` the height of the band a container shape keeps for its title, in units of its level.
 - A shape. Each border or extent point lies the length of the vector from the origin to it, times the shape's unit
-  length, along the point's compass, north toward −y: a constant offset from the origin, so that a segment, which
-  places neither of its points, is no constraint at all. Its content, the least box (`weak`) holding its origin, its
-  extent points, or its border points where it has none, and its grid, centred on its origin; its frame, the least box
-  (`weak`) holding its content and its minimum size, centred on its content.
+  length, along the point's compass, north toward −y: a constant offset from the origin, so that a segment, which places
+  neither of its points, is no constraint at all. Its content, the least box (`weak`) holding its origin, its extent
+  points, or its border points where it has none, and its grid, centred on its origin, its title's band above it; its
+  frame, the least box (`weak`) holding its content and its minimum size, centred on its content.
 - A grid. Columns follow each other a margin apart, the first and last a margin from the grid's edge; each column is the
   least width (`weak`) holding its cells, and rows likewise. A cell's shapes are stacked along its grid's axis, a margin
   between each, the stack centred along it and each shape across it. An empty grid has no size. The diagram's grid is
@@ -198,7 +199,8 @@ class Layout:
             return f"{e.key}.{n}"
 
         s = e.x
-        minimum = _tidy(_tuning(_diagram_of(s))["minimum"] * e.unit)
+        tuned = _tuning(_diagram_of(s))
+        minimum, title = _tidy(tuned["minimum"] * e.unit), _tidy(tuned["title"] * e.unit)
         origins = [x.point for x in s.origin]
         origin = origins[0] if origins else None
         offsets: list[tuple[Any, str, Pair, float]] = []
@@ -225,7 +227,7 @@ class Layout:
             add("grid.y", _c("==", 0, (1, v("gT")), (0.5, v("gH")), (-1, v("oy"))))
             add("grid.left", _c("<=", 0, (1, v("eL")), (-1, v("gL"))))
             add("grid.right", _c(">=", 0, (1, v("eR")), (-1, v("gL")), (-1, v("gW"))))
-            add("grid.top", _c("<=", 0, (1, v("eT")), (-1, v("gT"))))
+            add("grid.top", _c("<=", title, (1, v("eT")), (-1, v("gT"))))  # its title's band above it
             add("grid.bottom", _c(">=", 0, (1, v("eB")), (-1, v("gT")), (-1, v("gH"))))
         add("frame.left", _c("<=", 0, (1, v("L")), (-1, v("eL"))))
         add("frame.right", _c(">=", 0, (1, v("L")), (1, v("W")), (-1, v("eR"))))
@@ -418,6 +420,7 @@ def _tuning(diagram: Any) -> dict[str, float]:
         "scaling": given(diagram.scaling_factor.get(), Physical.SCALING_FACTOR),
         "margin": given(diagram.margin.get(), Physical.MARGIN),
         "minimum": given(diagram.minimum_size.get(), Physical.MINIMUM_SIZE),
+        "title": given(diagram.title_size.get(), Physical.TITLE_SIZE),
     }
 
 

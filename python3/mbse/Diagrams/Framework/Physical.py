@@ -9,7 +9,8 @@ diagram's `unit_length` is how long a vector of length 1 is at its top level, 1.
 how a unit length scales from a container to its children, at each level of containment: each shape, container and
 cell has its own unit length, computed from its container's, up to the diagram. Its `margin`, 0 unless set, is the
 collapsing margin between cells and around a grid, in diagram units at every level; its `minimum_size`, 0 unless set,
-a shape's least width and height, in units of its level.
+a shape's least width and height, in units of its level; and its `title_size`, 0.5 unless set, the height of the band at
+the top of a container shape that holds its title, above its children, in units of its level.
 
 Each annotation is owned through `Logical.Owns` by what it annotates, one each, so that it has its path and goes with
 it, and plays its part through a relation of its own:
@@ -32,9 +33,10 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["install", "UNIT_LENGTH", "SCALING_FACTOR", "MARGIN", "MINIMUM_SIZE"]
+__all__ = ["install", "UNIT_LENGTH", "SCALING_FACTOR", "MARGIN", "MINIMUM_SIZE", "TITLE_SIZE"]
 
-UNIT_LENGTH, SCALING_FACTOR, MARGIN, MINIMUM_SIZE = 1.0, 1.0, 0.0, 0.0  # a diagram's, where it sets none
+# a diagram's, where it sets none
+UNIT_LENGTH, SCALING_FACTOR, MARGIN, MINIMUM_SIZE, TITLE_SIZE = 1.0, 1.0, 0.0, 0.0, 0.5
 
 
 def install(txn: Any) -> Any:
@@ -100,6 +102,7 @@ def install(txn: Any) -> Any:
                 "scaling_factor": S.OfFloat,  # how a unit length scales from a container to its children
                 "margin": S.OfFloat,  # collapsing, between cells and around a grid, in diagram units, unscaled
                 "minimum_size": S.OfFloat,  # a shape's least width and height, in units of its level
+                "title_size": S.OfFloat,  # the height of a container's title band, in units of its level
             }).adjacencies([lambda t: t.name("frame").relation([_.DiagramFrame]).me("diagram")]),
             lambda _: _.Shape.name("Logical.OfShape").adjacencies([
                 lambda t: t.name("frame").relation([_.ShapeFrame]).me("shape"),

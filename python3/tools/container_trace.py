@@ -39,7 +39,7 @@ CASE = re.compile(r"^##\s+([A-Z]+-\d+[a-z]?)\s+·\s+(.*)$", re.M)
 
 sys.path.insert(0, str(TESTS))
 import support  # noqa: E402  (the bench, from the tests' folder)
-from mbse.Diagrams.Framework import Container  # noqa: E402
+from mbse.Diagrams.Framework import Container, Physical  # noqa: E402
 from mbse.Schemas.Framework import JSON, Plain  # noqa: E402
 
 
@@ -75,7 +75,7 @@ def physical_model(bench: Any) -> list[dict[str, Any]] | None:
         for e in x.frame:
             f = e.frame
             items.append({"key": key, "kind": kind, "label": label, "at": [f.absolute.x.get(), f.absolute.y.get()],
-                          "size": [f.size.width.get(), f.size.height.get()]})
+                          "size": [f.size.width.get(), f.size.height.get()], "unit": f.unit_length.get()})
 
     def visit(x: Any, key: str, kind: str) -> None:
         framed(x, key, kind, support.name_of(x))
@@ -99,8 +99,12 @@ def physical_model(bench: Any) -> list[dict[str, Any]] | None:
 
     try:
         visit(bench.overview, "", "diagram")
+        title = bench.overview.title_size.get()
     except Exception:
         return None
+    for item in items:  # the height of a shape's title, in diagram units: its band, where it is a container
+        if item["kind"] == "shape":
+            item["title"] = (Physical.TITLE_SIZE if title is None else title) * item["unit"]
     return items
 
 

@@ -1,6 +1,6 @@
 /**
  * Linear constraints, engine-neutral: what physical layout's rules become, for an engine to solve incrementally
- * ([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)). TypeScript only.
+ * ([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)).
  *
  * A `Constraint` is data: `terms`, each a coefficient and a variable, by name, plus a `constant`, related to 0 by `op`,
  * at a `strength`, `required` or a preference, `strong`, `medium` or `weak`. An `Engine` holds constraints by id, adds

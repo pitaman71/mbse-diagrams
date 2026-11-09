@@ -189,9 +189,10 @@ def wrap() -> None:
     init = support.Bench.__init__
 
     @functools.wraps(init)
-    def recording(self: Any) -> None:
-        init(self)
-        self._recording = True  # a bench the notebook made; a replay's makes none
+    def recording(self: Any, fresh: bool = True, physical: bool = False) -> None:
+        init(self, fresh, physical)
+        if fresh:
+            self._recording = True  # a bench the notebook made; a replay's, made empty, records nothing
 
     support.Bench.__init__ = recording
 

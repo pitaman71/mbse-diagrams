@@ -12,7 +12,8 @@ below are deliberate; any other difference is a bug. This is the list mbse-basis
 | Concern | Python | TypeScript | Why | Cases |
 |---|---|---|---|---|
 | Integers: a grid's span, extents and cells | `int` (`2`) | `bigint` (`2n`) | as in mbse-schemas, whose `OfInt` they are | CNT-02 to CNT-06 |
-| Physical layout's components | none: its schemas only | `Placement`, which places points and frames by `Constraints`, solved by `Kiwi` over [@lume/kiwi](https://github.com/lume/kiwi), its one dependency beyond mbse-schemas, by [CAP-242: incremental physical placement](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-242) | pixel-level layout runs where the diagram is rendered, as the user decided ([FEA-056: fungible diagramming keeps agents and humans in the loop](https://github.com/pitaman71/mbse-basis/blob/main/docs/features/FEA-056.md#decided)) | PKG-01; PLC, TypeScript's only |
+| The Kiwi solver, physical placement's engine | [kiwisolver](https://github.com/nucleic/kiwi), Kiwi itself, in C++ | [@lume/kiwi](https://github.com/lume/kiwi), its TypeScript port | each language's Kiwi, its one dependency beyond mbse-schemas, pinned; their solutions agree to within floating-point noise, which placement's rounding to a millionth of a unit absorbs | PLC |
+| A constraint, as data | `Constraints.Constraint`, a frozen dataclass, its terms tuples | an object literal of the `Constraint` interface, its terms arrays | each language's plain value | PLC-13 |
 
 ---
 

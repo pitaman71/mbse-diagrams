@@ -1,15 +1,17 @@
 /**
  * Physical placement: the coordinates physical layout gives a diagram, in diagram units, one mutation at a time, by
  * translating its rules into linear constraints that an engine solves incrementally
- * ([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)). TypeScript only,
- * a deliberate difference: what it writes are `Physical`'s annotations, which both languages read.
+ * ([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)): what it writes
+ * are `Physical`'s annotations.
  *
  * A `Layout` follows one diagram. After each mutation of its logical or container layout, `follow` is given the
  * objects the mutation touched; before one that removes a shape, `removing` is given the shape. It translates again
  * only what those touch, each shape or the diagram whose points, vectors, children or cells they are, changing in the
  * engine only the constraints that changed; the engine re-solves from its last solution; and `follow` returns the
  * mutation that writes each frame and placement whose values changed, an upsert transaction expression the caller
- * runs, or null where nothing moved. The engine is Kiwi's unless another is given.
+ * runs, or null where nothing moved. The engine is Kiwi's unless another is given. The engine is given every removal a
+ * mutation makes before any addition, so that it never holds a constraint beside the one replacing it: Kiwi, holding
+ * two that a third makes dependent, can leave the survivor unmet once the other goes.
  *
  * The rules, as constraints (`required` unless said):
  *
@@ -29,12 +31,12 @@
  * A value moved by less than a millionth of a unit has not moved, and every value written is rounded to a millionth of
  * a unit, so that the engine's floating-point noise is never a move. Two layouts of one diagram, one followed mutation
  * by mutation and one made afresh, agree to within two millionths of a unit: a value half way between two millionths
- * may round either way.
+ * may round either way. So do this implementation and Python's, whose Kiwi this one's is a port of.
  */
 
 import { Proxies } from "@mbse/schemas/Framework";
 
-import { type Constraint, ConstraintSet, type Engine, type Op } from "./Constraints.js";
+import { type Constraint, ConstraintSet, type Engine, type Op, signature } from "./Constraints.js";
 import * as Container from "./Container.js";
 import { KiwiEngine } from "./Kiwi.js";
 import * as Logical from "./Logical.js";
@@ -87,6 +89,7 @@ export class Layout {
   private dirty = new Set<Element>();
   private written = new Map<any, number[]>();
   private tuned = "";
+  private made = 0; // elements made so far: each key is its own
 
   constructor(private diagram: any, engine: Engine = new KiwiEngine()) {
     this.set = new ConstraintSet(engine);
@@ -112,10 +115,21 @@ export class Layout {
       this.dirty.add(this.element(this.diagram));
     }
     for (const x of touched) this.touch(x);
+    const made = new Map<Element, Map<string, Constraint>>();
     while (this.dirty.size) {
       const next = [...this.dirty].reduce((a, b) => (b.depth < a.depth ? b : a)); // containers before their children
       this.dirty.delete(next);
-      this.translate(next);
+      made.set(next, this.translate(next));
+    }
+    for (const [e, now] of made) { // every removal first: what went, and the old form of what changed
+      for (const [id, c] of e.constraints) {
+        const kept = now.get(id);
+        if (kept === undefined || signature(kept) !== signature(c)) this.set.change(id, null);
+      }
+    }
+    for (const [e, now] of made) {
+      for (const [id, c] of now) this.set.change(id, c);
+      e.constraints = now;
     }
     this.set.solve();
     const changed: [Annotation, number[]][] = [];
@@ -153,7 +167,7 @@ export class Layout {
     let e = this.elements.get(x);
     if (e === undefined) {
       const depth = isDiagram(x) ? 0 : (this.element(Container.container_of(x)).depth + 1);
-      e = { x, key: `e${this.elements.size}.${Logical.name_of(x)}`, depth, unit: unit_length(x), turn: 0,
+      e = { x, key: `e${this.made++}.${Logical.name_of(x)}`, depth, unit: unit_length(x), turn: 0,
         constraints: new Map(), annotations: new Map(), children: new Set() };
       this.elements.set(x, e);
       this.dirty.add(e);
@@ -163,18 +177,16 @@ export class Layout {
 
   // --- translation ---
 
-  private translate(e: Element): void {
-    const made: [string, Constraint][] = [];
+  /** An element's constraints, by id, and its annotations, which it takes at once. */
+  private translate(e: Element): Map<string, Constraint> {
+    const made = new Map<string, Constraint>();
     const annotations = new Map<any, Annotation>();
-    const add = (label: string, c: Constraint): void => { made.push([`${e.key}:${label}`, c]); };
+    const add = (label: string, c: Constraint): void => { made.set(`${e.key}:${label}`, c); };
     if (isShape(e.x)) this.shape(e, add, annotations);
     this.grid(e, add, annotations);
-    const ids = new Set(made.map(([id]) => id));
-    for (const id of e.constraints.keys()) if (!ids.has(id)) this.set.change(id, null);
-    for (const [id, c] of made) this.set.change(id, c);
     for (const of of e.annotations.keys()) if (!annotations.has(of)) this.written.delete(of);
-    e.constraints = new Map(made);
     e.annotations = annotations;
+    return made;
   }
 
   /** A shape's points, content and frame. */

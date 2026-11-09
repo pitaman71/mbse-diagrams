@@ -1,10 +1,10 @@
 /**
  * The Kiwi engine: `Constraints.Engine` over [@lume/kiwi](https://github.com/lume/kiwi), an incremental Cassowary
- * solver ([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)). TypeScript
- * only.
+ * solver ([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)).
  *
  * Kiwi solves in doubles, rounding nothing; its strengths are weights, `required` beyond them all. A required
- * constraint that conflicts with those it holds is refused, as `add` reports, and nothing is added.
+ * constraint that conflicts with those it holds is refused, as `add` reports, and nothing is added. Python's engine is
+ * Kiwi itself, `kiwisolver`, of which this is a port: the two agree to within their floating-point noise.
  */
 
 import * as kiwi from "@lume/kiwi";

@@ -4,7 +4,7 @@
 # Test plan
 
 One suite per notebook, with the same case IDs, in the same order, in both implementations; each case is a markdown
-cell, `<a id="ID"></a>` then `## ID · title`, followed by one code cell. CNT, ADJ and CNF are mutation sequences, run
+cell, `<a id="ID"></a>` then `## ID · title`, followed by one code cell. CNT, ADJ, CNF and PLC are mutation sequences, run
 through the bench in `support.py` (`support.ts`): each step a transaction expression, journalled, and the container
 layout's adjustments to it, which the step asserts. The design reference is mbse-basis
 [FEA-056: fungible diagramming keeps agents and humans in the loop](https://github.com/pitaman71/mbse-basis/blob/main/docs/features/FEA-056.md), with its capabilities.
@@ -18,14 +18,16 @@ TypeScript's plan lists only its differences. mbse-schemas is tested in mbse-sch
 | `04_Adjacency.ipynb` | ADJ | 9 | Rotations quantized to the nearest quarter turn; a spec moving its child beside the other by one change of the sequence, the rule met; two specs along one side sharing a cell, growing along its grid's axis; removing a spec dropping its rule and reverting its child, keeping the specs to it that remain; a spec the grid cannot meet ignored, and kept; a grid growing columns, and a spec that holds already held; original insertion positions through removals and additions, and a rule whose shapes move together still holding; cell rotation turning the compasses of the shapes cells hold; the journal replayed making the same adjustments |
 | `05_Conflicts.ipynb` | CNF | 8 | A spec that would break an earlier rule that holds ignored; a grid's rules as data; removing the earlier spec lifting the conflict, the ignored rules met in their order; removing a child lifting a conflict its rules made, or one that closing its gap meets with no move of its own; adding children lifting a conflict with the grid's extents; a child reverting out of a shared cell, the rules that hold restored; removing an ignored spec moving nothing; the journal replayed making the same adjustments |
 | `06_Physical.ipynb` | PHY | 5 | The install's schemas, each valid, run again writing nothing, the annotated schemas given `placement` and `frame`, the diagram `unit_length` and `scaling_factor`; a point's placement owned through `Logical.Owns`, its coordinates in diagram units and direction, its path the point's, written as JSON; the frames of a diagram, a shape, a grid and a cell, each with its unit length; one placement per point, as the validator reports; a child removed taking its points' placements and its cell's frame, counted by what the store reaches |
+| `07_Placement.ipynb` | PLC | 15 | [CAP-242: incremental physical placement](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-242), each step through the bench, the frames and placements its mutation wrote asserted, read from the mutation, the same values as TypeScript's: each level's unit length, its container's times the scaling factor; a shape's points along its vectors' compasses, by their lengths times its unit length, its frame bounding its extent points; a grid's columns and rows as wide as their widest cell, a collapsing margin between and around cells; a child growing its container and the diagram just enough, and a removal shrinking them; a change that moves nothing writing nothing; a shared cell stacking its shapes along its grid's axis, in a grid growing rows or columns; turned cells turning their shapes' points; a shape's minimum size; an emptied grid; a point no vector reaches, and a vector with no length; what placement writes an upsert the store runs, which a layout made afresh agrees with; a required constraint that conflicts ignored and queued, and held, in order, once what it conflicts with goes, preferences yielding to it; a seeded sequence of every kind of mutation, after each of which the layout followed mutation by mutation agrees with one made afresh; the journal replayed placing everything the same |
 
-Total: 38 cases, and TypeScript's 15 PLC cases, which [its plan](../../typescript5/tests/TestPlan.md) lists.
+Total: 53 cases.
 
 ## Not testable yet
 
 The rest of what [FEA-056: fungible diagramming keeps agents and humans in the loop](https://github.com/pitaman71/mbse-basis/blob/main/docs/features/FEA-056.md) plans:
-conflicting rules in physical layout (the rest of [CAP-240: conflicting layout rules ignored and requeued](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-240)), and
-[CAP-243: a diagram displayed from its mutation stream](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-243).
+[CAP-243: a diagram displayed from its mutation stream](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-243). Conflicting rules in physical layout, the rest of
+[CAP-240: conflicting layout rules ignored and requeued](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-240), are tested through the queue itself (PLC-13): none of the physical rules
+built so far can conflict.
 
 ---
 

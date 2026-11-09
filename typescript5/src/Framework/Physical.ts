@@ -24,9 +24,9 @@
  *   its rectangle's top left, `absolute`, in the diagram, and `relative`, from the frame that encloses it, its `size`,
  *   and its `unit_length`. The diagram's frame is its size, which grows and shrinks with its cells.
  *
- * Physical layout's components, which place points and frames, are TypeScript's only
- * ([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)); these schemas are
- * both languages', so that what physical layout writes is data that either reads.
+ * `Placement` places points and frames, writing these annotations
+ * ([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)), in both
+ * languages, so that what physical layout writes is data that either reads, and either writes the same.
  */
 
 /** A diagram's unit length, scaling factor, margin and minimum shape size, where it sets none. */

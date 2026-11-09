@@ -34,7 +34,7 @@ nav button { display: block; width: 100%; text-align: left; border: 0; backgroun
 nav button:hover { background: var(--slot); }
 nav button.on { background: var(--accent); color: #fff; }
 nav button .n { float: right; opacity: .7; font-size: 12px; font-variant-numeric: tabular-nums; }
-main { display: grid; grid-template-rows: auto 1fr; min-width: 0; min-height: 0; }
+main { display: grid; grid-template-rows: auto auto 1fr; min-width: 0; min-height: 0; }
 header { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 header h2 { margin: 0; font-size: 15px; }
 header .case { color: var(--muted); flex: 1 1 300px; }
@@ -66,6 +66,16 @@ details { margin-top: 6px; }
 summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 pre { background: var(--code); padding: 6px 8px; border-radius: 6px; font-size: 11px; max-height: 140px; overflow: auto; margin: 4px 0 0; }
 svg { display: block; max-width: 100%; height: auto; }
+.timeline { border-bottom: 1px solid var(--line); max-height: 132px; overflow-y: auto; padding: 6px 14px; }
+.timeline .row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; padding: 2px 0; }
+.timeline .row .m { flex: 0 0 auto; min-width: 230px; max-width: 320px; color: var(--muted); font: 12px ui-monospace, monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.timeline .row.on .m { color: var(--ink); font-weight: 700; }
+.chip { font: 11px system-ui, sans-serif; padding: 1px 7px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel); color: inherit; cursor: pointer; }
+.chip.placement { border-style: dashed; }
+.chip.refused { color: var(--ignored); border-color: var(--ignored); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; border-style: solid; }
 .toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin: -3px 0 8px; }
 .toggle button { font: 600 11px system-ui, sans-serif; text-transform: uppercase; letter-spacing: .05em; padding: 4px 10px;
   border: 0; background: none; color: var(--muted); cursor: pointer; }
@@ -86,10 +96,11 @@ svg.physical { width: 100%; height: auto; max-height: 100%; }
   <main>
     <header>
       <h2 id="title"></h2><span class="case" id="case"></span>
-      <button id="prev" title="Previous adjustment (←); ↑ the previous mutation">←</button>
-      <button id="next" title="Next adjustment (→); ↓ the next mutation">→</button>
+      <button id="prev" title="Previous pass (←); ↑ the previous mutation">←</button>
+      <button id="next" title="Next pass (→); ↓ the next mutation">→</button>
       <span class="pos" id="pos"></span>
     </header>
+    <div class="timeline" id="timeline" aria-label="the case's mutations, each with its passes"></div>
     <div class="columns">
       <div class="column">
         <section class="panel"><h3>Data model</h3><div id="data"></div></section>
@@ -114,11 +125,14 @@ svg.physical { width: 100%; height: auto; max-height: 100%; }
 </div>
 <script>
 const TRACE = /*TRACE*/null;
-// A position is a case, a mutation in it, and one of that mutation's adjustments; a mutation with none is shown once.
+// A position is a case, a mutation in it, and one of that mutation's passes: each of the container layout's adjustments,
+// in order, then, where the bench places, placement; a mutation with neither is shown once.
 const cases = [];
 for (const nb of TRACE.notebooks) for (const c of nb.cases) cases.push({ nb, c });
 let at = { k: 0, m: 0, a: 0 };
-const count = (step) => Math.max(step.adjustments.length, 1);
+const places = (step) => step.placed !== null;
+const count = (step) => Math.max(step.adjustments.length + (places(step) ? 1 : 0), 1);
+const isPlacement = (step, a) => places(step) && a === step.adjustments.length;
 
 const nav = document.getElementById("nav");
 let last = null;
@@ -150,6 +164,42 @@ function adjustmentText(a) {
     case "extents": return `extents now ${a.rows} × ${a.columns}`;
   }
   return esc(JSON.stringify(a));
+}
+
+function chipText(a) {
+  switch (a.kind) {
+    case "grid": return "grid made";
+    case "rotate": return `turn ${a.degrees}°`;
+    case "place": return `place ${a.shape} ${pos(a.to)}`;
+    case "move": return `move ${a.shape} ${pos(a.to)}`;
+    case "leave": return `${a.shape} leaves`;
+    case "rule": return `rule ${a.from_shape}→${a.to_shape} ${a.status}`;
+    case "extents": return `extents ${a.rows}×${a.columns}`;
+  }
+  return a.kind;
+}
+
+function timelineView() {
+  const { c } = cases[at.k];
+  let html = "";
+  c.steps.forEach((step, m) => {
+    html += `<div class="row${m === at.m ? " on" : ""}"><span class="m" data-m="${m}" title="${esc(step.mutation)}">${m + 1}. ${esc(step.mutation)}</span>`;
+    const chip = (a, label, cls) => `<button class="chip ${cls}${m === at.m && a === at.a ? " on" : ""}" data-m="${m}" data-a="${a}">${esc(label)}</button>`;
+    if (step.error) html += chip(0, "refused", "refused");
+    else step.adjustments.forEach((adj, a) => { html += chip(a, chipText(adj), ""); });
+    if (places(step)) {
+      const n = step.placed.length;
+      html += chip(step.adjustments.length, n ? `placement · ${n} written` : "placement · nothing moved", "placement");
+    } else if (!step.adjustments.length && !step.error) html += chip(0, "no adjustments", "");
+    html += "</div>";
+  });
+  const t = document.getElementById("timeline");
+  t.innerHTML = html;
+  for (const el of t.querySelectorAll("[data-m]")) {
+    el.onclick = () => go({ k: at.k, m: +el.dataset.m, a: el.dataset.a === undefined ? 0 : +el.dataset.a });
+  }
+  const on = t.querySelector(".chip.on") || t.querySelector(".row.on");
+  if (on) on.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 function effectText(a, state) {
@@ -345,11 +395,11 @@ function physicalView(items, changed) {
     "shapes outlined, grids dashed, cells shaded; each point's tick shows its direction, origins in blue; what this step moved is highlighted</div>";
 }
 
-function placedText(step) {
+function placedText(step, placing) {
   if (step.placed === null) return '<span class="empty">this bench does not place</span>';
-  const after = step.adjustments.length > 1 ? `, after all ${step.adjustments.length} of the container layout's adjustments` : "";
-  if (!step.placed.length) return `<span class="empty">nothing moved: placement wrote nothing${after}</span>`;
-  let html = `<div class="sub" style="margin:0 0 6px">one mutation, an upsert of ${step.placed.length} annotation${step.placed.length > 1 ? "s" : ""}${after}</div>`;
+  if (!placing) return `<span class="empty">placement is this mutation's last pass, after the container layout's ${step.adjustments.length} adjustment${step.adjustments.length === 1 ? "" : "s"}: until then, the layout as it was</span>`;
+  if (!step.placed.length) return '<span class="empty">nothing moved: placement wrote nothing</span>';
+  let html = `<div class="sub" style="margin:0 0 6px">one mutation, an upsert of ${step.placed.length} annotation${step.placed.length > 1 ? "s" : ""}</div>`;
   html += "<table><tr><th>of</th><th></th><th>absolute</th><th>size or direction</th></tr>";
   for (const row of step.placed) {
     const [of, kind, absolute] = row;
@@ -369,12 +419,13 @@ document.getElementById("show-physical").onclick = () => setMode("physical");
 
 function show() {
   const { nb, c } = cases[at.k], step = c.steps[at.m];
-  const a = step.adjustments[at.a] || null;
-  const state = step.adjustments.length ? step.states[at.a] : step.model_before;
+  const placing = isPlacement(step, at.a);
+  const a = placing ? null : step.adjustments[at.a] || null;
+  const state = step.adjustments.length ? step.states[Math.min(at.a, step.adjustments.length - 1)] : step.model_before;
   document.getElementById("title").textContent = nb.title;
   document.getElementById("case").textContent = `${c.id} · ${c.title}`;
-  document.getElementById("pos").textContent = `mutation ${at.m + 1} of ${c.steps.length} · ` +
-    `adjustment ${step.adjustments.length ? at.a + 1 : 0} of ${step.adjustments.length}`;
+  document.getElementById("pos").textContent = `mutation ${at.m + 1} of ${c.steps.length} · pass ${at.a + 1} of ${count(step)}: ` +
+    (placing ? "placement" : step.adjustments.length ? `adjustment ${at.a + 1} of ${step.adjustments.length}` : "no adjustments");
   document.getElementById("data").innerHTML = dataView(step.data_before, step.data_after);
   document.getElementById("mutation").innerHTML = `<div class="what">${esc(step.mutation)}</div>` +
     (step.kind === "unchild" ? '<div class="sub">anticipated: the container layout adjusts first, while what the mutation deletes still exists</div>' : "") +
@@ -382,26 +433,32 @@ function show() {
   document.getElementById("model").innerHTML = modelView(state, a);
   document.getElementById("adjustment").innerHTML = step.error
     ? `<div class="what">refused<span class="badge error">error</span></div><div class="sub">${esc(step.error)}</div>`
+    : placing ? `<div class="what">placement</div><div class="sub">the container layout has made its ${step.adjustments.length} adjustment${step.adjustments.length === 1 ? "" : "s"}; physical layout follows the mutation once</div>`
     : `<div class="what">${adjustmentText(a)}</div>` +
       (step.adjustments.length ? `<div class="sub">${at.a + 1} of ${step.adjustments.length} for this mutation</div>` : "");
   for (const [id, m] of [["show-container", "container"], ["show-physical", "physical"]]) {
     const b = document.getElementById(id);
     b.classList.toggle("on", mode === m); b.setAttribute("aria-pressed", String(mode === m));
   }
-  if (mode === "physical") { // placement follows the whole mutation, once: shown after it, as the data model is
-    document.getElementById("layout").innerHTML = physicalView(step.physical_after, changedKeys(step.physical_before, step.physical_after));
+  if (mode === "physical") { // placement is the mutation's last pass: the layout as it was until then
+    document.getElementById("layout").innerHTML = placing
+      ? physicalView(step.physical_after, changedKeys(step.physical_before, step.physical_after))
+      : physicalView(step.physical_before, new Set());
     document.getElementById("effect-title").textContent = "Placement";
-    document.getElementById("effect").innerHTML = placedText(step);
+    document.getElementById("effect").innerHTML = placedText(step, placing);
   } else {
     document.getElementById("layout").innerHTML = layoutView(state, a);
     document.getElementById("effect-title").textContent = "Effect on the layout";
-    document.getElementById("effect").innerHTML = step.error ? '<span class="empty">the layout is unchanged</span>' : effectText(a, state);
+    document.getElementById("effect").innerHTML = step.error ? '<span class="empty">the layout is unchanged</span>'
+      : placing ? '<span class="empty">the container layout is settled; placement gives it coordinates: see the physical layout</span>'
+      : effectText(a, state);
   }
   const lastCase = at.k === cases.length - 1, lastStep = at.m === c.steps.length - 1;
   document.getElementById("prev").disabled = at.k === 0 && at.m === 0 && at.a === 0;
   document.getElementById("next").disabled = lastCase && lastStep && at.a === count(step) - 1;
   for (const b of nav.querySelectorAll("button")) b.classList.toggle("on", +b.dataset.k === at.k);
-  try { localStorage.setItem("container-trace-2", JSON.stringify(at)); } catch (e) { /* storage unavailable */ }
+  timelineView();
+  try { localStorage.setItem("container-trace-3", JSON.stringify(at)); } catch (e) { /* storage unavailable */ }
 }
 
 function go(p) {
@@ -438,7 +495,7 @@ document.addEventListener("keydown", (e) => {
   if (keys[e.key]) { keys[e.key](); e.preventDefault(); }
 });
 try {
-  const saved = JSON.parse(localStorage.getItem("container-trace-2"));
+  const saved = JSON.parse(localStorage.getItem("container-trace-3"));
   if (saved && cases[saved.k] && cases[saved.k].c.steps[saved.m] && saved.a < count(cases[saved.k].c.steps[saved.m])) at = saved;
 } catch (e) { /* storage unavailable */ }
 show();

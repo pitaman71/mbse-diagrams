@@ -12,7 +12,7 @@ below are deliberate; any other difference is a bug. This is the list mbse-basis
 | Concern | Python | TypeScript | Why | Cases |
 |---|---|---|---|---|
 | Integers: a grid's span, extents and cells | `int` (`2`) | `bigint` (`2n`) | as in mbse-schemas, whose `OfInt` they are | CNT-02 to CNT-06 |
-| Physical layout's components | none: its schemas only | `Placement`, which places points and frames, by [CAP-242: incremental physical placement](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-242) | pixel-level layout runs where the diagram is rendered, as the user decided ([FEA-056: fungible diagramming keeps agents and humans in the loop](https://github.com/pitaman71/mbse-basis/blob/main/docs/features/FEA-056.md#decided)) | PKG-01; PLC, TypeScript's only |
+| Physical layout's components | none: its schemas only | `Placement`, which places points and frames by `Constraints`, solved by `Kiwi` over [@lume/kiwi](https://github.com/lume/kiwi), its one dependency beyond mbse-schemas, by [CAP-242: incremental physical placement](https://github.com/pitaman71/mbse-basis/blob/main/docs/capabilities/README.md#CAP-242) | pixel-level layout runs where the diagram is rendered, as the user decided ([FEA-056: fungible diagramming keeps agents and humans in the loop](https://github.com/pitaman71/mbse-basis/blob/main/docs/features/FEA-056.md#decided)) | PKG-01; PLC, TypeScript's only |
 
 ---
 

@@ -19,6 +19,7 @@
     "coverage": "c8 --check-coverage --100 tsx tests/run-notebooks.ts --typecheck"
   },
   "dependencies": {
+    "@lume/kiwi": "0.4.4",
     "@mbse/schemas": "file:../../mbse-schemas/typescript5"
   },
   "devDependencies": {

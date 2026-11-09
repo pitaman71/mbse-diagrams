@@ -1,47 +1,51 @@
 /**
- * Physical placement: the coordinates physical layout gives a diagram, in diagram units, incrementally, one change at
- * a time ([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)). TypeScript
- * only, a deliberate difference: it writes `Physical`'s annotations, which both languages read.
+ * Physical placement: the coordinates physical layout gives a diagram, in diagram units, one mutation at a time, by
+ * translating its rules into linear constraints that an engine solves incrementally
+ * ([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)). TypeScript only,
+ * a deliberate difference: what it writes are `Physical`'s annotations, which both languages read.
  *
- * Units. The diagram's unit length is its `unit_length`; a shape's is its container's times the diagram's
- * `scaling_factor`, and a shape's own grid and cells share its unit length. The `margin`, collapsing, is the same
- * number of diagram units at every level; the `minimum_size` is a shape's least width and height, in units of its
- * level.
+ * A `Layout` follows one diagram. After each mutation of its logical or container layout, `follow` is given the
+ * objects the mutation touched; before one that removes a shape, `removing` is given the shape. It translates again
+ * only what those touch, each shape or the diagram whose points, vectors, children or cells they are, changing in the
+ * engine only the constraints that changed; the engine re-solves from its last solution; and `follow` returns the
+ * mutation that writes each frame and placement whose values changed, an upsert transaction expression the caller
+ * runs, or null where nothing moved. The engine is Kiwi's unless another is given.
  *
- * A shape. Its origin is its own (0, 0); each border or extent point lies the length of the vector from the origin to
- * it, times the shape's unit length, along the point's compass, north toward −y. Its box is the bounding box of its
- * origin and its extent points, or of its border points where it has no extent points, grown to hold its grid, centred
- * on its origin, and to its minimum size.
+ * The rules, as constraints (`required` unless said):
  *
- * A grid. Each column is as wide as its widest cell and each row as tall as its tallest; a margin separates cells, and
- * cells from the grid's edge, never doubled. A cell holding several shapes stacks them along its grid's axis, a margin
- * between each; each shape, or the stack, is centred in its cell. A diagram is the size of its grid.
+ * - Units. The diagram's unit length is its `unit_length`; a shape's, its container's times the diagram's
+ *   `scaling_factor`; a shape's grid and cells share its unit length. The `margin`, collapsing, is the same number of
+ *   diagram units at every level; the `minimum_size` a shape's least width and height, in units of its level.
+ * - A shape. Each border or extent point lies the length of the vector from the origin to it, times the shape's unit
+ *   length, along the point's compass, north toward −y: a constant offset from the origin, so that a segment, which
+ *   places neither of its points, is no constraint at all. Its content, the least box (`weak`) holding its origin, its
+ *   extent points, or its border points where it has none, and its grid, centred on its origin; its frame, the least
+ *   box (`weak`) holding its content and its minimum size, centred on its content.
+ * - A grid. Columns follow each other a margin apart, the first and last a margin from the grid's edge; each column is
+ *   the least width (`weak`) holding its cells, and rows likewise. A cell's shapes are stacked along its grid's axis, a
+ *   margin between each, the stack centred along it and each shape across it. An empty grid has no size. The
+ *   diagram's grid is at (0, 0), and the diagram is its size.
  *
- * Incrementally. `place(container)`, after a change of `container`'s grid, lays that grid out again from the sizes its
- * children already have, then the grid of each container above it, only while the one below changed size;
- * `reshape(shape)`, after a change of a shape's points or vectors, does the same from the shape's box. Then every
- * frame and placement beneath the highest container laid out again is given its absolute coordinates; each that
- * changed is written, and returned as an adjustment, in order.
+ * A value moved by less than a millionth of a unit has not moved, and every value written is rounded to a millionth of
+ * a unit, so that the engine's floating-point noise is never a move. Two layouts of one diagram, one followed mutation
+ * by mutation and one made afresh, agree to within two millionths of a unit: a value half way between two millionths
+ * may round either way.
  */
 
 import { Proxies } from "@mbse/schemas/Framework";
 
+import { type Constraint, ConstraintSet, type Engine, type Op } from "./Constraints.js";
 import * as Container from "./Container.js";
+import { KiwiEngine } from "./Kiwi.js";
 import * as Logical from "./Logical.js";
 import * as Physical from "./Physical.js";
 
-/** An adjustment of the physical layout, as data: a frame or a placement that moved or resized. */
-export type Adjustment = Record<string, any>;
-
 type Pair = [number, number];
 
-/** A coordinate rounded to a billionth of a unit, so that sines and cosines leave no noise; -0 is 0. */
+/** A value rounded to a millionth of a unit; -0 is 0. */
 function tidy(v: number): number {
-  return Math.round(v * 1e9) / 1e9 + 0;
+  return Math.round(v * 1e6) / 1e6 + 0;
 }
-
-/** The frames whose size the change being placed altered: each is reported, though it may not move. */
-let resizedFrames = new Set<any>();
 
 interface Tuning {
   unit: number;
@@ -50,26 +54,24 @@ interface Tuning {
   minimum: number;
 }
 
-/** A shape's local geometry: its points' offsets from its origin, and its box's corners, around the origin. */
-interface Geometry {
-  points: { point: any; role: string; at: Pair; direction: number }[];
-  box: [number, number, number, number];
+/** A frame or a placement, as an element writes it: its values, read from the engine. */
+interface Annotation {
+  of: any;
+  kind: "frame" | "placement";
+  role: string;
+  values: () => number[];
 }
 
-/** After a change of `container`'s grid, a shape's or the diagram's: lays the grid out again, and the containers above
- * it its change of size reaches, and gives what moved its absolute coordinates. Returns the adjustments, in order.
- * Within a transaction. */
-export function place(container: any): Adjustment[] {
-  resizedFrames = new Set();
-  if (gridOf(container) !== null) layoutGrid(gridOf(container));
-  return climb(container);
-}
-
-/** After a change of `shape`'s points or vectors: places them again, and what its change of size reaches. Returns the
- * adjustments, in order. Within a transaction. */
-export function reshape(shape: any): Adjustment[] {
-  resizedFrames = new Set();
-  return climb(shape);
+/** A shape or the diagram: the constraints and annotations it translates to, as last translated. */
+interface Element {
+  x: any;
+  key: string;
+  depth: number;
+  unit: number;
+  turn: number;
+  constraints: Map<string, Constraint>;
+  annotations: Map<any, Annotation>;
+  children: Set<any>;
 }
 
 /** `x`'s unit length: the diagram's, or a shape's, its container's times the scaling factor. */
@@ -78,27 +80,304 @@ export function unit_length(x: any): number {
   return unit_length(Container.container_of(x)) * tuning(diagramOf(x)).scaling;
 }
 
-/** From `x`, whose grid or points just changed: its box, then each container's grid above it while a box below
- * changed size; then the absolute coordinates beneath the highest container laid out again. */
-function climb(x: any): Adjustment[] {
-  let at = x;
-  const finish = (): Adjustment[] => {
-    const adjustments: Adjustment[] = [];
-    descend(at, isDiagram(at) ? [0, 0] : absoluteOf(at), adjustments);
-    resizedFrames = new Set();
-    return adjustments;
-  };
-  while (!isDiagram(at) && resized(at)) {
-    at = Container.container_of(at);
-    layoutGrid(gridOf(at));
+/** One diagram's physical layout, followed one mutation at a time. */
+export class Layout {
+  private set: ConstraintSet;
+  private elements = new Map<any, Element>();
+  private dirty = new Set<Element>();
+  private written = new Map<any, number[]>();
+  private tuned = "";
+
+  constructor(private diagram: any, engine: Engine = new KiwiEngine()) {
+    this.set = new ConstraintSet(engine);
   }
-  return finish();
+
+  /** Before a mutation removes `shape`: drops its constraints and annotations, and its children's. */
+  removing(shape: any): void {
+    const e = this.elements.get(shape) as Element;
+    for (const child of e.children) this.removing(child);
+    for (const id of e.constraints.keys()) this.set.change(id, null);
+    for (const of of e.annotations.keys()) this.written.delete(of);
+    this.elements.delete(shape);
+    this.dirty.delete(e);
+  }
+
+  /** After a mutation, given the objects it touched: translates again what they touch, solves, and returns the
+   * mutation that writes what changed, or null. */
+  follow(touched: any[]): any {
+    const tuned = JSON.stringify(tuning(this.diagram));
+    if (tuned !== this.tuned) { // every unit length and margin with it
+      this.tuned = tuned;
+      for (const e of this.elements.values()) this.dirty.add(e);
+      this.dirty.add(this.element(this.diagram));
+    }
+    for (const x of touched) this.touch(x);
+    while (this.dirty.size) {
+      const next = [...this.dirty].reduce((a, b) => (b.depth < a.depth ? b : a)); // containers before their children
+      this.dirty.delete(next);
+      this.translate(next);
+    }
+    this.set.solve();
+    const changed: [Annotation, number[]][] = [];
+    for (const e of this.elements.values()) {
+      for (const a of e.annotations.values()) {
+        const values = a.values();
+        const was = this.written.get(a.of);
+        if (was === undefined || values.some((v, i) => Math.abs(v - (was[i] as number)) >= 1e-6)) {
+          const rounded = values.map(tidy);
+          this.written.set(a.of, rounded);
+          changed.push([a, rounded]);
+        }
+      }
+    }
+    return changed.length ? mutation(this.diagram, changed) : null;
+  }
+
+  /** The ids of the constraints the engine refused, queued in order. */
+  ignored(): string[] {
+    return this.set.ignored();
+  }
+
+  // --- what a touched object touches ---
+
+  private touch(x: any): void {
+    const kind: string = x.as_schema().name;
+    if (kind.startsWith("Physical.") || kind === "Logical.DiagramDirectory") return;
+    let at = x;
+    while (!isDiagram(at) && !isShape(at)) at = Logical.owner_of(at); // a point, vector, segment, spec, grid or cell
+    this.dirty.add(this.element(at));
+    if (isShape(at)) this.dirty.add(this.element(Container.container_of(at))); // where it is held
+  }
+
+  private element(x: any): Element {
+    let e = this.elements.get(x);
+    if (e === undefined) {
+      const depth = isDiagram(x) ? 0 : (this.element(Container.container_of(x)).depth + 1);
+      e = { x, key: `e${this.elements.size}.${Logical.name_of(x)}`, depth, unit: unit_length(x), turn: 0,
+        constraints: new Map(), annotations: new Map(), children: new Set() };
+      this.elements.set(x, e);
+      this.dirty.add(e);
+    }
+    return e;
+  }
+
+  // --- translation ---
+
+  private translate(e: Element): void {
+    const made: [string, Constraint][] = [];
+    const annotations = new Map<any, Annotation>();
+    const add = (label: string, c: Constraint): void => { made.push([`${e.key}:${label}`, c]); };
+    if (isShape(e.x)) this.shape(e, add, annotations);
+    this.grid(e, add, annotations);
+    const ids = new Set(made.map(([id]) => id));
+    for (const id of e.constraints.keys()) if (!ids.has(id)) this.set.change(id, null);
+    for (const [id, c] of made) this.set.change(id, c);
+    for (const of of e.annotations.keys()) if (!annotations.has(of)) this.written.delete(of);
+    e.constraints = new Map(made);
+    e.annotations = annotations;
+  }
+
+  /** A shape's points, content and frame. */
+  private shape(e: Element, add: (label: string, c: Constraint) => void, annotations: Map<any, Annotation>): void {
+    const v = (n: string): string => `${e.key}.${n}`;
+    const s = e.x;
+    const minimum = tidy(tuning(diagramOf(s)).minimum * e.unit);
+    const [origin] = [...s.origin].map((x: any) => x.point);
+    const offsets: { point: any; role: string; at: Pair; direction: number }[] = [];
+    for (const [role, member] of [["border", "borders"], ["extent", "extents"]] as const) {
+      for (const x of s[member]) {
+        const vector = [...x.point.incoming].map((y: any) => y.vector).find((y: any) => Logical.ends(y)[0] === origin);
+        const length = vector === undefined ? 0 : (vector.length.get() ?? 0) * e.unit;
+        const direction = compassOf(x.point);
+        const radians = (direction * Math.PI) / 180;
+        offsets.push({ point: x.point, role, at: [tidy(length * Math.sin(radians)), tidy(-length * Math.cos(radians))],
+          direction });
+      }
+    }
+    const extents = offsets.filter((p) => p.role === "extent");
+    const bounding = [[0, 0] as Pair, ...(extents.length ? extents : offsets).map((p) => p.at)];
+    const [x0, y0] = [Math.min(...bounding.map((p) => p[0])), Math.min(...bounding.map((p) => p[1]))];
+    const [x1, y1] = [Math.max(...bounding.map((p) => p[0])), Math.max(...bounding.map((p) => p[1]))];
+    add("content.left", c("<=", -x0, [1, v("eL")], [-1, v("ox")]));
+    add("content.right", c(">=", -x1, [1, v("eR")], [-1, v("ox")]));
+    add("content.top", c("<=", -y0, [1, v("eT")], [-1, v("oy")]));
+    add("content.bottom", c(">=", -y1, [1, v("eB")], [-1, v("oy")]));
+    add("content.width", least([1, v("eR")], [-1, v("eL")]));
+    add("content.height", least([1, v("eB")], [-1, v("eT")]));
+    if (gridOf(s) !== null) {
+      add("grid.x", c("==", 0, [1, v("gL")], [0.5, v("gW")], [-1, v("ox")])); // centred on the origin
+      add("grid.y", c("==", 0, [1, v("gT")], [0.5, v("gH")], [-1, v("oy")]));
+      add("grid.left", c("<=", 0, [1, v("eL")], [-1, v("gL")]));
+      add("grid.right", c(">=", 0, [1, v("eR")], [-1, v("gL")], [-1, v("gW")]));
+      add("grid.top", c("<=", 0, [1, v("eT")], [-1, v("gT")]));
+      add("grid.bottom", c(">=", 0, [1, v("eB")], [-1, v("gT")], [-1, v("gH")]));
+    }
+    add("frame.left", c("<=", 0, [1, v("L")], [-1, v("eL")]));
+    add("frame.right", c(">=", 0, [1, v("L")], [1, v("W")], [-1, v("eR")]));
+    add("frame.top", c("<=", 0, [1, v("T")], [-1, v("eT")]));
+    add("frame.bottom", c(">=", 0, [1, v("T")], [1, v("H")], [-1, v("eB")]));
+    add("frame.x", c("==", 0, [2, v("L")], [1, v("W")], [-1, v("eL")], [-1, v("eR")])); // centred on its content
+    add("frame.y", c("==", 0, [2, v("T")], [1, v("H")], [-1, v("eT")], [-1, v("eB")]));
+    add("frame.minimum.width", c(">=", -minimum, [1, v("W")]));
+    add("frame.minimum.height", c(">=", -minimum, [1, v("H")]));
+    add("frame.width", least([1, v("W")]));
+    add("frame.height", least([1, v("H")]));
+    const value = (n: string): number => this.set.value(v(n));
+    for (const p of offsets) {
+      annotations.set(p.point, { of: p.point, kind: "placement", role: "point", values: () => [
+        tidy(value("ox") + p.at[0]), tidy(value("oy") + p.at[1]), p.at[0], p.at[1], tidy(p.direction)] });
+    }
+  }
+
+  /** A container's grid: its columns and rows, its cells, and the shapes in them; and its children's units. */
+  private grid(e: Element, add: (label: string, c: Constraint) => void, annotations: Map<any, Annotation>): void {
+    const v = (n: string): string => `${e.key}.${n}`;
+    const value = (n: string): number => this.set.value(v(n));
+    const grid = gridOf(e.x);
+    const diagram = isDiagram(e.x);
+    if (diagram) e.unit = tuning(e.x).unit;
+    if (grid === null) return; // the diagram, once it has its grid, or a shape, once it is a container
+    const t = tuning(diagramOf(e.x));
+    const m = t.margin;
+    const [unit, turn] = [e.unit * t.scaling, e.turn + grid.cell_rotation.degrees.get()];
+    const at = (): Pair => (diagram ? [0, 0] : [value("L"), value("T")]);
+    if (diagram) {
+      add("grid.left", c("==", 0, [1, v("gL")]));
+      add("grid.top", c("==", 0, [1, v("gT")]));
+      annotations.set(e.x, { of: e.x, kind: "frame", role: "diagram", values: () =>
+        [0, 0, 0, 0, tidy(value("gW")), tidy(value("gH")), e.unit] });
+    }
+    annotations.set(grid, { of: grid, kind: "frame", role: "grid", values: () => [tidy(value("gL")),
+      tidy(value("gT")), tidy(value("gL") - at()[0]), tidy(value("gT") - at()[1]), tidy(value("gW")),
+      tidy(value("gH")), e.unit] });
+    const cells = cellsOf(grid);
+    const children = new Set<any>();
+    if (cells.length === 0) {
+      add("grid.width", c("==", 0, [1, v("gW")]));
+      add("grid.height", c("==", 0, [1, v("gH")]));
+    }
+    for (const [axis, count, start, size, pos, length] of [
+      ["column", Number(grid.columns.get()), "gL", "gW", "X", "W"],
+      ["row", Number(grid.rows.get()), "gT", "gH", "Y", "H"],
+    ] as const) {
+      for (let k = 0; k < count; k++) {
+        const before = k === 0 ? [[-1, v(start)]] as [number, string][] : [[-1, v(`${axis}${k - 1}.${pos}`)],
+          [-1, v(`${axis}${k - 1}.${length}`)]] as [number, string][];
+        add(`${axis}${k}.at`, c("==", -m, [1, v(`${axis}${k}.${pos}`)], ...before));
+        add(`${axis}${k}.size`, least([1, v(`${axis}${k}.${length}`)]));
+      }
+      if (count > 0) {
+        add(`${axis}s.end`, c("==", -m, [1, v(start)], [1, v(size)], [-1, v(`${axis}${count - 1}.${pos}`)],
+          [-1, v(`${axis}${count - 1}.${length}`)]));
+      }
+    }
+    const rows = grid.grows.get() === "rows";
+    for (const cell of cells) {
+      const [cx, cy, cw, ch] = [`column${cell.column}.X`, `row${cell.row}.Y`, `column${cell.column}.W`,
+        `row${cell.row}.H`];
+      annotations.set(cell.cell, { of: cell.cell, kind: "frame", role: "cell", values: () => [tidy(value(cx)),
+        tidy(value(cy)), tidy(value(cx) - value("gL")), tidy(value(cy) - value("gT")), tidy(value(cw)),
+        tidy(value(ch)), e.unit] });
+      const [along, alongSize, across, acrossSize, sAlong, sAlongSize, sAcross, sAcrossSize] = rows
+        ? [cy, ch, cx, cw, "T", "H", "L", "W"] : [cx, cw, cy, ch, "L", "W", "T", "H"];
+      const kids = cell.shapes.map((s) => {
+        const child = this.element(s);
+        children.add(s);
+        if (child.unit !== unit || child.turn !== turn) { // a context its points are placed in
+          [child.unit, child.turn] = [unit, turn];
+          this.dirty.add(child);
+        }
+        return child;
+      });
+      kids.forEach((k, i) => {
+        const w = (n: string): string => `${k.key}.${n}`;
+        const label = `cell ${cell.row},${cell.column}.${k.key}`;
+        add(`${label}.across`, c("==", 0, [2, w(sAcross)], [1, w(sAcrossSize)], [-2, v(across)],
+          [-1, v(acrossSize)]));
+        add(`${label}.inside`, c(">=", 0, [1, w(sAcross)], [-1, v(across)]));
+        if (i === 0) add(`${label}.first`, c(">=", 0, [1, w(sAlong)], [-1, v(along)]));
+        else {
+          const p = (n: string): string => `${(kids[i - 1] as Element).key}.${n}`;
+          add(`${label}.after`, c("==", -m, [1, w(sAlong)], [-1, p(sAlong)], [-1, p(sAlongSize)]));
+        }
+        const value2 = (n: string): number => this.set.value(w(n));
+        annotations.set(k.x, { of: k.x, kind: "frame", role: "shape", values: () => [tidy(value2("L")),
+          tidy(value2("T")), tidy(value2("L") - value(cx)), tidy(value2("T") - value(cy)), tidy(value2("W")),
+          tidy(value2("H")), k.unit] });
+        const [origin] = [...k.x.origin].map((x: any) => x.point);
+        if (origin !== undefined) {
+          const direction = tidy(compassOf(origin));
+          annotations.set(origin, { of: origin, kind: "placement", role: "point", values: () => [tidy(value2("ox")),
+            tidy(value2("oy")), tidy(value2("ox") - value(cx)), tidy(value2("oy") - value(cy)), direction] });
+        }
+      });
+      const [first, last] = [kids[0] as Element, kids[kids.length - 1] as Element];
+      add(`cell ${cell.row},${cell.column}.centred`, c("==", 0, [1, `${first.key}.${sAlong}`],
+        [1, `${last.key}.${sAlong}`], [1, `${last.key}.${sAlongSize}`], [-2, v(along)], [-1, v(alongSize)]));
+    }
+    e.children = children;
+  }
+}
+
+// --- the mutation that writes what changed ---
+
+/** An upsert of each changed annotation, found by its owner's path from the diagram directory. */
+function mutation(diagram: any, changed: [Annotation, number[]][]): any {
+  const store: any = Proxies.store_of(diagram);
+  const symbols: Record<string, any> = { directory: store.Logical.DiagramDirectory };
+  const specs: ((_: any) => any)[] = [];
+  const named = new Map<any, string>();
+  const name = (x: any): string => {
+    const kind: string = x.as_schema().name;
+    if (kind === "Logical.DiagramDirectory") return "directory";
+    let s = named.get(x);
+    if (s === undefined) {
+      const owner = name(Logical.owner_of(x)); // owners first, so that the upsert finds each by its owner and name
+      s = `o${named.size}`;
+      named.set(x, s);
+      const [module, schema] = kind.split(".") as [string, string];
+      symbols[s] = store[module][schema];
+      const [key, symbol] = [Logical.name_of(x) as string, s];
+      specs.push((_: any) => _[owner].owns({ [key]: (e: any) => e.owned(_[symbol]) }));
+    }
+    return s;
+  };
+  changed.forEach(([a, values], i) => {
+    const [o, w] = [name(a.of), `w${i}`];
+    const [ax, ay, rx, ry] = values as [number, number, number, number];
+    const placed = (b: any): any => b.absolute((p: any) => p.x(ax).y(ay)).relative((p: any) => p.x(rx).y(ry));
+    if (a.kind === "frame") {
+      symbols[w] = store.Physical.OfFrame;
+      const [width, height, unit] = values.slice(4) as [number, number, number];
+      specs.push((_: any) => _[o].owns({ frame: (e: any) => e.owned(_[w]) }), (_: any) => _[w][a.role]([_[o]]),
+        (_: any) => placed(_[w]).size((z: any) => z.width(width).height(height)).unit_length(unit));
+    } else {
+      symbols[w] = store.Physical.OfPlacement;
+      specs.push((_: any) => _[o].owns({ placement: (e: any) => e.owned(_[w]) }), (_: any) => _[w].point([_[o]]),
+        (_: any) => placed(_[w]).direction(values[4]));
+    }
+  });
+  return store.Mutations.OfTransaction((t: any) => t.mutations([(mu: any) => mu.upsert((u: any) => u.exists([
+    (p: any) => p.symbols(symbols).spec(specs)]))]));
 }
 
 // --- reading the diagram ---
 
+function c(op: Op, constant: number, ...terms: [number, string][]): Constraint {
+  return { terms, constant, op, strength: "required" };
+}
+
+/** A preference that `terms` be as small as they can. */
+function least(...terms: [number, string][]): Constraint {
+  return { terms, constant: 0, op: "==", strength: "weak" };
+}
+
 function isDiagram(x: any): boolean {
   return x.as_schema().name === "Logical.OfDiagram";
+}
+
+function isShape(x: any): boolean {
+  return x.as_schema().name === "Logical.OfShape";
 }
 
 function diagramOf(x: any): any {
@@ -121,10 +400,6 @@ function gridOf(container: any): any {
   return null;
 }
 
-function containerOfGrid(grid: any): any {
-  return [...grid.container][0].container;
-}
-
 /** A grid's cells, each with its row, column and shapes, in order. */
 function cellsOf(grid: any): { cell: any; row: number; column: number; shapes: any[] }[] {
   return [...grid.cells].map((e: any) => ({
@@ -133,212 +408,10 @@ function cellsOf(grid: any): { cell: any; row: number; column: number; shapes: a
   }));
 }
 
-function store(x: any): any {
-  return Proxies.store_of(x);
-}
-
-function frameOf(x: any): any {
-  for (const e of x.frame) return e.frame;
-  return null;
-}
-
-/** `x`'s frame, made where it has none, at 0 and of no size: `role` names the part it plays for `x`. */
-function frame(x: any, role: string): any {
-  if (frameOf(x) === null) {
-    const zero = (v: any): any => v.x(0).y(0);
-    store(x).Physical.OfFrame((f: any) => f.owner((a: any) => a.insert((e: any) => e.name("frame").owner(x)))[role](
-      (a: any) => a.insert((e: any) => e[role](x))).absolute(zero).relative(zero)
-      .size((z: any) => z.width(0).height(0)).unit_length(0));
-  }
-  return frameOf(x);
-}
-
-// a grid's frame, and each of its shapes' and cells', is made before any of them is read
-
-function sizeOf(x: any): Pair {
-  const f = frameOf(x);
-  return [f.size.width.get(), f.size.height.get()];
-}
-
-function absoluteOf(x: any): Pair {
-  const f = frameOf(x);
-  return [f.absolute.x.get(), f.absolute.y.get()];
-}
-
-function relativeOf(x: any): Pair {
-  const f = frameOf(x);
-  return [f.relative.x.get(), f.relative.y.get()];
-}
-
-function write(f: any, spec: (b: any) => any): void {
-  const was = [f.size.width.get(), f.size.height.get()];
-  store(f).Physical.OfFrame(f, spec);
-  if (was[0] !== f.size.width.get() || was[1] !== f.size.height.get()) resizedFrames.add(f);
-}
-
-// --- a shape ---
-
 function compassOf(p: any): number {
   try {
     return Logical.compass(p);
   } catch {
     return 0; // a point whose compass the rules leave undefined lies north of its origin
-  }
-}
-
-/** A shape's local geometry, from its points, its vectors and its grid's size. */
-function geometry(shape: any): Geometry {
-  const unit = unit_length(shape);
-  const minimum = tuning(diagramOf(shape)).minimum * unit;
-  const points: Geometry["points"] = [];
-  const [origin] = [...shape.origin].map((e: any) => e.point);
-  if (origin !== undefined) points.push({ point: origin, role: "origin", at: [0, 0], direction: compassOf(origin) });
-  for (const [role, member] of [["border", "borders"], ["extent", "extents"]]) {
-    for (const e of shape[member as string]) {
-      const vector = [...e.point.incoming].map((x: any) => x.vector).find((v: any) => Logical.ends(v)[0] === origin);
-      const length = vector === undefined ? 0 : (vector.length.get() ?? 0) * unit;
-      const direction = compassOf(e.point);
-      const radians = (direction * Math.PI) / 180;
-      points.push({ point: e.point, role: role as string,
-        at: [tidy(length * Math.sin(radians)), tidy(-length * Math.cos(radians))], direction });
-    }
-  }
-  const extents = points.filter((p) => p.role === "extent");
-  const bounding = [[0, 0] as Pair, ...(extents.length ? extents : points.filter((p) => p.role === "border"))
-    .map((p) => p.at)];
-  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
-  for (const [x, y] of bounding) {
-    [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
-  }
-  const grid = gridOf(shape);
-  if (grid !== null) {
-    const [w, h] = sizeOf(grid);
-    [x0, y0, x1, y1] = [Math.min(x0, -w / 2), Math.min(y0, -h / 2), Math.max(x1, w / 2), Math.max(y1, h / 2)];
-  }
-  if (x1 - x0 < minimum) [x0, x1] = [(x0 + x1 - minimum) / 2, (x0 + x1 + minimum) / 2];
-  if (y1 - y0 < minimum) [y0, y1] = [(y0 + y1 - minimum) / 2, (y0 + y1 + minimum) / 2];
-  return { points, box: [tidy(x0), tidy(y0), tidy(x1), tidy(y1)] };
-}
-
-/** Writes `shape`'s frame's size and unit length from its geometry: whether its size changed. */
-function resized(shape: any): boolean {
-  const was = frameOf(shape) === null ? null : sizeOf(shape); // a shape just added has no frame yet
-  const [x0, y0, x1, y1] = geometry(shape).box;
-  const [w, h] = [tidy(x1 - x0), tidy(y1 - y0)];
-  write(frame(shape, "shape"), (b: any) => b.size((s: any) => s.width(w).height(h)).unit_length(unit_length(shape)));
-  return was === null || was[0] !== w || was[1] !== h;
-}
-
-// --- a grid ---
-
-/** Lays a grid out from its children's sizes: its size, each cell's frame relative to it, and each shape's relative to
- * its cell. */
-function layoutGrid(grid: any): void {
-  const container = containerOfGrid(grid);
-  const m = tuning(diagramOf(container)).margin;
-  const unit = unit_length(container);
-  const cells = cellsOf(grid);
-  const grows: string = grid.grows.get();
-  const content = new Map<any, Pair>();
-  for (const c of cells) {
-    const sizes = c.shapes.map(sizeOf);
-    const along = sizes.reduce((sum, z) => sum + (grows === "rows" ? z[1] : z[0]), 0) + m * (sizes.length - 1);
-    const across = sizes.reduce((most, z) => Math.max(most, grows === "rows" ? z[0] : z[1]), 0);
-    content.set(c.cell, grows === "rows" ? [across, along] : [along, across]);
-  }
-  const [rows, columns] = [Number(grid.rows.get()), Number(grid.columns.get())];
-  const widths: number[] = Array(columns).fill(0);
-  const heights: number[] = Array(rows).fill(0);
-  for (const c of cells) {
-    const [w, h] = content.get(c.cell) as Pair;
-    widths[c.column] = Math.max(widths[c.column] as number, w);
-    heights[c.row] = Math.max(heights[c.row] as number, h);
-  }
-  const offset = (sizes: number[], k: number): number => tidy(m + sizes.slice(0, k).reduce((a, b) => a + b, 0) + m * k);
-  const [width, height] = cells.length ? [offset(widths, columns), offset(heights, rows)] : [0, 0];
-  write(frame(grid, "grid"), (b: any) => b.size((s: any) => s.width(width).height(height)).unit_length(unit));
-  for (const c of cells) {
-    const [cw, ch] = [widths[c.column] as number, heights[c.row] as number];
-    const [cx, cy] = [offset(widths, c.column), offset(heights, c.row)];
-    write(frame(c.cell, "cell"), (b: any) => b.relative((v: any) => v.x(cx).y(cy))
-      .size((s: any) => s.width(cw).height(ch)).unit_length(unit));
-    const [bw, bh] = content.get(c.cell) as Pair;
-    let along = 0;
-    for (const s of c.shapes) {
-      const [w, h] = sizeOf(s);
-      const [x, y] = (grows === "rows" ? [(cw - w) / 2, (ch - bh) / 2 + along] : [(cw - bw) / 2 + along, (ch - h) / 2])
-        .map(tidy) as Pair;
-      along += (grows === "rows" ? h : w) + m;
-      write(frame(s, "shape"), (b: any) => b.relative((v: any) => v.x(x).y(y)));
-    }
-  }
-}
-
-// --- absolute coordinates ---
-
-/** Gives `x`, its top left at `at`, and everything beneath it, its absolute coordinates, writing and recording each
- * that changed. */
-function descend(x: any, at: Pair, adjustments: Adjustment[]): void {
-  const grid = gridOf(x);
-  let gridAt: Pair = [0, 0];
-  if (isDiagram(x)) {
-    moved(frame(x, "diagram"), x, [0, 0], sizeOf(grid), tuning(x).unit, adjustments); // reached once it has a grid
-  } else {
-    const shaped = geometry(x);
-    const origin: Pair = [tidy(at[0] - shaped.box[0]), tidy(at[1] - shaped.box[1])];
-    moved(frameOf(x), x, at, null, null, adjustments);
-    const rel = relativeOf(x);
-    for (const p of shaped.points) {
-      const placed: Pair = [tidy(origin[0] + p.at[0]), tidy(origin[1] + p.at[1])];
-      const relative: Pair = p.role === "origin" ? [tidy(rel[0] - shaped.box[0]), tidy(rel[1] - shaped.box[1])] : p.at;
-      place_point(p.point, placed, relative, p.direction, adjustments);
-    }
-    if (grid !== null) {
-      const [w, h] = sizeOf(grid);
-      gridAt = [tidy(origin[0] - w / 2), tidy(origin[1] - h / 2)];
-    }
-  }
-  if (grid === null) return;
-  const g = frameOf(grid);
-  write(g, (b: any) => b.relative((v: any) => v.x(tidy(gridAt[0] - at[0])).y(tidy(gridAt[1] - at[1]))));
-  moved(g, grid, gridAt, null, null, adjustments);
-  for (const c of cellsOf(grid)) {
-    const [rx, ry] = relativeOf(c.cell);
-    const cellAt: Pair = [tidy(gridAt[0] + rx), tidy(gridAt[1] + ry)];
-    moved(frameOf(c.cell), c.cell, cellAt, null, null, adjustments);
-    for (const s of c.shapes) {
-      const [sx, sy] = relativeOf(s);
-      descend(s, [tidy(cellAt[0] + sx), tidy(cellAt[1] + sy)], adjustments);
-    }
-  }
-}
-
-/** Writes a frame's absolute top left, and its size and unit length where given, recording it where it changed. */
-function moved(f: any, of: any, at: Pair, size: Pair | null, unit: number | null, adjustments: Adjustment[]): void {
-  const was = [f.absolute.x.get(), f.absolute.y.get(), f.size.width.get(), f.size.height.get()];
-  write(f, (b: any) => {
-    let w = b.absolute((v: any) => v.x(at[0]).y(at[1]));
-    if (size !== null) w = w.size((s: any) => s.width(size[0]).height(size[1]));
-    return unit === null ? w : w.unit_length(unit);
-  });
-  const now = [at[0], at[1], f.size.width.get(), f.size.height.get()];
-  if (was.some((v, i) => v !== now[i]) || resizedFrames.has(f)) {
-    adjustments.push({ kind: "frame", of, absolute: at, size: [now[2], now[3]] });
-  }
-}
-
-/** Writes a point's placement, made where it has none, recording it where it changed. */
-function place_point(point: any, at: Pair, relative: Pair, direction: number, adjustments: Adjustment[]): void {
-  const s = store(point);
-  if ([...point.placement].length === 0) {
-    s.Physical.OfPlacement((q: any) => q.owner((a: any) => a.insert((e: any) => e.name("placement").owner(point)))
-      .point((a: any) => a.insert((e: any) => e.point(point))));
-  }
-  const [placement] = [...point.placement].map((e: any) => e.placement);
-  const was = [placement.absolute.x.get(), placement.absolute.y.get(), placement.direction.get()];
-  s.Physical.OfPlacement(placement, (q: any) => q.absolute((v: any) => v.x(at[0]).y(at[1]))
-    .relative((v: any) => v.x(relative[0]).y(relative[1])).direction(direction));
-  if (was[0] !== at[0] || was[1] !== at[1] || was[2] !== direction) {
-    adjustments.push({ kind: "placement", point, absolute: at, direction });
   }
 }

@@ -7,7 +7,8 @@ a deterministic function of a mutation sequence. Two implementations exist, `pyt
 for the schemas and container layout, with physical layout's components in TypeScript only. Built so far: the logical
 layout's schemas (`Logical`); the container layout's implied grids, filled in order and rearranged by adjacency specs,
 the later of two conflicting specs ignored until it can be met (`Container`); the physical layout's schemas
-(`Physical`); and, in TypeScript only, the incremental physical placement of points and frames (`Placement`).
+(`Physical`); and, in TypeScript only, the incremental physical placement of points and frames (`Placement`), its
+rules as engine-neutral linear constraints (`Constraints`) solved by Kiwi (`Kiwi`), writing what it places as mutations.
 
 ## Start here
 

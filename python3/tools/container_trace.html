@@ -345,11 +345,11 @@ function physicalView(items, changed) {
     "shapes outlined, grids dashed, cells shaded; each point's tick shows its direction, origins in blue; what this step moved is highlighted</div>";
 }
 
-function placedText(step, final) {
+function placedText(step) {
   if (step.placed === null) return '<span class="empty">this bench does not place</span>';
-  if (!final) return `<span class="empty">placement follows once the container layout has made all ${step.adjustments.length} of its adjustments</span>`;
-  if (!step.placed.length) return '<span class="empty">nothing moved: placement wrote nothing</span>';
-  let html = `<div class="sub" style="margin:0 0 6px">one mutation, an upsert of ${step.placed.length} annotation${step.placed.length > 1 ? "s" : ""}</div>`;
+  const after = step.adjustments.length > 1 ? `, after all ${step.adjustments.length} of the container layout's adjustments` : "";
+  if (!step.placed.length) return `<span class="empty">nothing moved: placement wrote nothing${after}</span>`;
+  let html = `<div class="sub" style="margin:0 0 6px">one mutation, an upsert of ${step.placed.length} annotation${step.placed.length > 1 ? "s" : ""}${after}</div>`;
   html += "<table><tr><th>of</th><th></th><th>absolute</th><th>size or direction</th></tr>";
   for (const row of step.placed) {
     const [of, kind, absolute] = row;
@@ -384,16 +384,14 @@ function show() {
     ? `<div class="what">refused<span class="badge error">error</span></div><div class="sub">${esc(step.error)}</div>`
     : `<div class="what">${adjustmentText(a)}</div>` +
       (step.adjustments.length ? `<div class="sub">${at.a + 1} of ${step.adjustments.length} for this mutation</div>` : "");
-  const final = at.a === count(step) - 1; // placement follows the mutation's last adjustment
   for (const [id, m] of [["show-container", "container"], ["show-physical", "physical"]]) {
     const b = document.getElementById(id);
     b.classList.toggle("on", mode === m); b.setAttribute("aria-pressed", String(mode === m));
   }
-  if (mode === "physical") {
-    const items = final ? step.physical_after : step.physical_before;
-    document.getElementById("layout").innerHTML = physicalView(items, final ? changedKeys(step.physical_before, step.physical_after) : new Set());
+  if (mode === "physical") { // placement follows the whole mutation, once: shown after it, as the data model is
+    document.getElementById("layout").innerHTML = physicalView(step.physical_after, changedKeys(step.physical_before, step.physical_after));
     document.getElementById("effect-title").textContent = "Placement";
-    document.getElementById("effect").innerHTML = placedText(step, final);
+    document.getElementById("effect").innerHTML = placedText(step);
   } else {
     document.getElementById("layout").innerHTML = layoutView(state, a);
     document.getElementById("effect-title").textContent = "Effect on the layout";

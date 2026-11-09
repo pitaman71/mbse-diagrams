@@ -380,7 +380,7 @@ function physicalView(items, changed) {
   for (const i of frames) { // in the diagram's own order: each container before what it holds
     svg += rect(i, ...STYLE[i.kind]);
     if (i.kind === "shape") {
-      svg += `<text x="${i.at[0] + font * 0.3}" y="${i.at[1] + font * 1.05}" font-size="${font}" fill="${changed.has(i.key) ? "var(--hl-line)" : "var(--ink)"}" font-weight="${changed.has(i.key) ? 800 : 600}">${esc(i.label)}</text>`;
+      svg += `<text x="${i.at[0] + i.size[0] / 2}" y="${i.at[1] + font * 1.05}" text-anchor="middle" font-size="${font}" fill="${changed.has(i.key) ? "var(--hl-line)" : "var(--ink)"}" font-weight="${changed.has(i.key) ? 800 : 600}">${esc(i.label)}</text>`;
     }
   }
   for (const i of items.filter((p) => p.kind === "point")) {

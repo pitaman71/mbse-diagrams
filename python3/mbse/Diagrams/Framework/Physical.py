@@ -7,7 +7,9 @@ diagram units, floats, `x` to the right and `y` down, so that north, a compass's
 them to its viewport. A `Physical.OfPoint2` is a pair of them; a `Physical.OfSize` a `width` and a `height`. The
 diagram's `unit_length` is how long a vector of length 1 is at its top level, 1.0 unless set, and its `scaling_factor`
 how a unit length scales from a container to its children, at each level of containment: each shape, container and
-cell has its own unit length, computed from its container's, up to the diagram.
+cell has its own unit length, computed from its container's, up to the diagram. Its `margin`, 0 unless set, is the
+collapsing margin between cells and around a grid, in diagram units at every level; its `minimum_size`, 0 unless set,
+a shape's least width and height, in units of its level.
 
 Each annotation is owned through `Logical.Owns` by what it annotates, one each, so that it has its path and goes with
 it, and plays its part through a relation of its own:
@@ -21,18 +23,18 @@ it, and plays its part through a relation of its own:
   its rectangle's top left, `absolute`, in the diagram, and `relative`, from the frame that encloses it, its `size`, and
   its `unit_length`. The diagram's frame is its size, which grows and shrinks with its cells.
 
-Physical layout's components, which place points and frames, are TypeScript's only
-([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)); these schemas are
-both languages', so that what physical layout writes is data that either reads.
+`Placement` places points and frames, writing these annotations
+([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)), in both
+languages, so that what physical layout writes is data that either reads, and either writes the same.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["install", "UNIT_LENGTH", "SCALING_FACTOR"]
+__all__ = ["install", "UNIT_LENGTH", "SCALING_FACTOR", "MARGIN", "MINIMUM_SIZE"]
 
-UNIT_LENGTH, SCALING_FACTOR = 1.0, 1.0  # a diagram's, where it sets none
+UNIT_LENGTH, SCALING_FACTOR, MARGIN, MINIMUM_SIZE = 1.0, 1.0, 0.0, 0.0  # a diagram's, where it sets none
 
 
 def install(txn: Any) -> Any:
@@ -96,6 +98,8 @@ def install(txn: Any) -> Any:
             lambda _: _.Diagram.name("Logical.OfDiagram").properties({
                 "unit_length": S.OfFloat,  # a vector of length 1 at the top level, in diagram units
                 "scaling_factor": S.OfFloat,  # how a unit length scales from a container to its children
+                "margin": S.OfFloat,  # collapsing, between cells and around a grid, in diagram units, unscaled
+                "minimum_size": S.OfFloat,  # a shape's least width and height, in units of its level
             }).adjacencies([lambda t: t.name("frame").relation([_.DiagramFrame]).me("diagram")]),
             lambda _: _.Shape.name("Logical.OfShape").adjacencies([
                 lambda t: t.name("frame").relation([_.ShapeFrame]).me("shape"),

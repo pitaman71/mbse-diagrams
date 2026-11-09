@@ -1,6 +1,6 @@
 {
   "name": "@mbse/diagrams",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Diagrams of mbse-schemas data, laid out incrementally: logical, container and physical layouts, each a deterministic function of a mutation sequence (TypeScript implementation)",
   "keywords": ["diagrams", "layout", "incremental layout", "visualization", "mbse", "sysml"],
   "type": "module",
@@ -19,6 +19,7 @@
     "coverage": "c8 --check-coverage --100 tsx tests/run-notebooks.ts --typecheck"
   },
   "dependencies": {
+    "@lume/kiwi": "0.4.4",
     "@mbse/schemas": "file:../../mbse-schemas/typescript5"
   },
   "devDependencies": {

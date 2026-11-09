@@ -4,9 +4,11 @@
 ([CAP-237: logical layout schemas](mbse:mbse-basis/docs/capabilities/CAP-237.md)), `Container` the container layout's
 ([CAP-238: container schemas and grid insertion](mbse:mbse-basis/docs/capabilities/CAP-238.md)),
 and `Physical` the physical layout's
-([CAP-241: physical layout schemas](mbse:mbse-basis/docs/capabilities/README.md#CAP-241)).
+([CAP-241: physical layout schemas](mbse:mbse-basis/docs/capabilities/README.md#CAP-241)). `Placement` places a diagram
+by `Constraints`, engine-neutral linear constraints, which an engine solves, Kiwi's by default
+([CAP-242: incremental physical placement](mbse:mbse-basis/docs/capabilities/README.md#CAP-242)).
 """
 
-from . import Container, Logical, Physical
+from . import Constraints, Container, Kiwi, Logical, Physical, Placement
 
-__all__ = ["Container", "Logical", "Physical"]
+__all__ = ["Constraints", "Container", "Kiwi", "Logical", "Physical", "Placement"]

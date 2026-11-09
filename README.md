@@ -16,8 +16,10 @@ algorithm keeps them consistent, one mutation at a time.
 Built so far: the logical layout's schemas, `Logical`, every object owned through one relation, `Logical.Owns`, and the
 compass of a point or a shape; the container layout's implied grids, `Container`, which place a container's children in
 order and move them beside each other by adjacency specs, ignoring the later of two that conflict until it can be met,
-one mutation at a time; and the physical layout's schemas, `Physical`, the coordinates, in diagram units, physical
-layout will give points and frames.
+one mutation at a time; the physical layout's schemas, `Physical`, the coordinates, in diagram units, of points and
+frames; and physical placement, `Placement`, which translates the layout rules into linear constraints that an
+incremental solver, Kiwi, solves, and places them as each mutation changes the container layout, moving only what it
+must.
 The design is mbse-basis
 [FEA-056: fungible diagramming keeps agents and humans in the loop](https://github.com/pitaman71/mbse-basis/blob/main/docs/features/FEA-056.md)
 and [the diagrams proposal](https://github.com/pitaman71/mbse-basis/blob/main/proposals/DIAGRAMS.md); the capabilities, in build order, are

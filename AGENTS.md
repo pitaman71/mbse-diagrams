@@ -3,11 +3,12 @@
 mbse-diagrams lays out diagrams of [mbse-schemas](https://github.com/pitaman71/mbse-schemas) data incrementally: a
 logical layout of shapes, points, vectors, segments and adjacency specs, each owned through `Logical.Owns`, a container
 layout of the grids each container's children are placed in, and a physical layout of coordinates in diagram units, each
-a deterministic function of a mutation sequence. Two implementations exist, `python3/` and `typescript5/`: equivalent
-for the schemas and container layout, with physical layout's components in TypeScript only. Built so far: the logical
+a deterministic function of a mutation sequence. Two implementations exist, `python3/` and `typescript5/`, equivalent.
+Built so far: the logical
 layout's schemas (`Logical`); the container layout's implied grids, filled in order and rearranged by adjacency specs,
-the later of two conflicting specs ignored until it can be met (`Container`); and the physical layout's schemas
-(`Physical`).
+the later of two conflicting specs ignored until it can be met (`Container`); the physical layout's schemas
+(`Physical`); and the incremental physical placement of points and frames (`Placement`), its rules as engine-neutral
+linear constraints (`Constraints`) solved by Kiwi (`Kiwi`), writing what it places as mutations.
 
 ## Start here
 
@@ -47,7 +48,7 @@ python3 ../mbse-basis/scripts/polyrepo.py clone # mbse-schemas, beside this repo
 python3 ../mbse-basis/scripts/polyrepo.py check # the siblings are present and compatible with siblings.json
 cd python3 && uv sync                           # Python: use uv, never pip
 uv run coverage run -m pytest && uv run coverage combine && uv run coverage report
-uv run python tools/container_trace.py --open   # step through the tests' mutations and the container's adjustments
+uv run python tools/container_trace.py --open   # step through the tests' mutations, the container's adjustments and placement
 
 cd typescript5 && nvm use && npm install        # TypeScript: Node 22 or later
 npm run coverage                                # type-checks, runs every notebook, gates at 100%

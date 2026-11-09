@@ -183,8 +183,8 @@ class Bench:
         """The diagram's physical tuning, `unit_length`, `scaling_factor`, `margin` and `minimum_size`, each given set: a
         mutation of the logical layout alone, before what it tunes is placed."""
         d = symbol("")
-        return self._step("logical", (), [], *[lambda _, n=n, v=v: getattr(getattr(_, d), n)(float(v))
-                                               for n, v in tuning.items()])
+        return self._step("logical", tuple(f"{n}={v:g}" for n, v in tuning.items()), [],
+                          *[lambda _, n=n, v=v: getattr(getattr(_, d), n)(float(v)) for n, v in tuning.items()])
 
     def points(self, at: str, extents: list[tuple[str, float, float]]) -> str:
         """The shape at `at` given an origin, and extent points each reached from it by a vector, by `(name, degrees,
@@ -330,7 +330,6 @@ class Bench:
 
     def _step(self, kind: str, args: tuple[Any, ...], paths: list[str], *specs: Any,
               spec: bool | dict[str, Any] = False) -> str:
-        self.placed = ""
         tx = self._expression(paths, *specs, spec=spec)
         adjusted = self._apply(kind, args, tx)
         self.journal.append((kind, args, JSON.dumps(Plain.ToPlain(self.store).Transaction(tx)), adjusted, self.placed))
@@ -351,6 +350,7 @@ class Bench:
     def _apply(self, kind: str, args: tuple[Any, ...], tx: Any) -> str:
         """Runs the mutation `tx`, then the `Container` function that follows a mutation of `kind`, in a transaction
         of its own, or first, for a removal: its adjustments, or its error, as text."""
+        self.placed = ""
         box = args[0] if args else ""
         if self.physical and kind == "unchild" and self.placement is not None:
             for n in args[1:]:

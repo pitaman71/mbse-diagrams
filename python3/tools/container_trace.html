@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Container Trace</title>
+<title>Layout Trace</title>
 <style>
 :root {
   --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #d9d9d3; --slot: #eeeeea;
@@ -66,6 +66,12 @@ details { margin-top: 6px; }
 summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 pre { background: var(--code); padding: 6px 8px; border-radius: 6px; font-size: 11px; max-height: 140px; overflow: auto; margin: 4px 0 0; }
 svg { display: block; max-width: 100%; height: auto; }
+.toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin: -3px 0 8px; }
+.toggle button { font: 600 11px system-ui, sans-serif; text-transform: uppercase; letter-spacing: .05em; padding: 4px 10px;
+  border: 0; background: none; color: var(--muted); cursor: pointer; }
+.toggle button.on { background: var(--accent); color: #fff; }
+svg.physical { width: 100%; height: auto; max-height: 100%; }
+.legend { color: var(--muted); font-size: 11px; margin-top: 6px; }
 @media (max-width: 1000px) {
   .app { grid-template-columns: 1fr; height: auto; }
   nav { max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--line); }
@@ -76,7 +82,7 @@ svg { display: block; max-width: 100%; height: auto; }
 </head>
 <body>
 <div class="app">
-  <nav id="nav"><h1>Container trace</h1></nav>
+  <nav id="nav"><h1>Layout trace</h1></nav>
   <main>
     <header>
       <h2 id="title"></h2><span class="case" id="case"></span>
@@ -94,8 +100,14 @@ svg { display: block; max-width: 100%; height: auto; }
         <section class="panel change"><h3>Adjustment</h3><div id="adjustment"></div></section>
       </div>
       <div class="column">
-        <section class="panel"><h3>Container layout</h3><div id="layout"></div></section>
-        <section class="panel change"><h3>Effect on the layout</h3><div id="effect"></div></section>
+        <section class="panel">
+          <div class="toggle" role="group" aria-label="the layout shown">
+            <button id="show-container" aria-pressed="true">Container layout</button>
+            <button id="show-physical" aria-pressed="false">Physical layout</button>
+          </div>
+          <div id="layout"></div>
+        </section>
+        <section class="panel change"><h3 id="effect-title">Effect on the layout</h3><div id="effect"></div></section>
       </div>
     </div>
   </main>
@@ -284,6 +296,77 @@ function layoutView(state, a) {
   return svg + "</svg>";
 }
 
+// --- the physical layout: frames and points at their coordinates, in diagram units, scaled to the panel ---
+
+let mode = "container";
+try { if (localStorage.getItem("container-trace-mode") === "physical") mode = "physical"; } catch (e) { /* none */ }
+
+const num = (v) => (Math.round(v * 1000) / 1000).toString();
+const sameItem = (x, y) => x && y && JSON.stringify([x.at, x.size, x.direction]) === JSON.stringify([y.at, y.size, y.direction]);
+
+function changedKeys(before, after) {
+  const was = new Map((before || []).map((i) => [i.key, i]));
+  return new Set((after || []).filter((i) => !sameItem(was.get(i.key), i)).map((i) => i.key));
+}
+
+function physicalView(items, changed) {
+  if (!items) return '<p class="empty">this bench does not place</p>';
+  if (!items.length) return '<p class="empty">nothing placed yet</p>';
+  const frames = items.filter((i) => i.size);
+  const xs = items.flatMap((i) => (i.size ? [i.at[0], i.at[0] + i.size[0]] : [i.at[0]]));
+  const ys = items.flatMap((i) => (i.size ? [i.at[1], i.at[1] + i.size[1]] : [i.at[1]]));
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const span = Math.max(x1 - x0, y1 - y0, 1), pad = span * 0.06;
+  const font = span * 0.03, dot = span * 0.009;
+  let svg = `<svg class="physical" viewBox="${x0 - pad} ${y0 - pad} ${x1 - x0 + 2 * pad} ${y1 - y0 + 2 * pad}" role="img" aria-label="the physical layout">`;
+  const rect = (i, fill, stroke, dash, width) => {
+    const on = changed.has(i.key); // highlighted by its outline, so that what it holds stays in view
+    return `<rect x="${i.at[0]}" y="${i.at[1]}" width="${i.size[0]}" height="${i.size[1]}" fill="${fill}" ` +
+      `stroke="${on ? "var(--hl-line)" : stroke}" stroke-width="${on ? width + 1.5 : width}" stroke-dasharray="${on ? "0" : dash}" vector-effect="non-scaling-stroke">` +
+      `<title>${esc(i.key || "the diagram")}: at (${num(i.at[0])}, ${num(i.at[1])}), ${num(i.size[0])} × ${num(i.size[1])}</title></rect>`;
+  };
+  const STYLE = { diagram: ["none", "var(--line)", "0", 1], grid: ["none", "var(--muted)", "3 3", 1],
+                  cell: ["var(--slot)", "none", "0", 1], shape: ["none", "var(--ink)", "0", 1.5] };
+  for (const i of frames) { // in the diagram's own order: each container before what it holds
+    svg += rect(i, ...STYLE[i.kind]);
+    if (i.kind === "shape") {
+      svg += `<text x="${i.at[0] + font * 0.3}" y="${i.at[1] + font * 1.05}" font-size="${font}" fill="${changed.has(i.key) ? "var(--hl-line)" : "var(--ink)"}" font-weight="${changed.has(i.key) ? 800 : 600}">${esc(i.label)}</text>`;
+    }
+  }
+  for (const i of items.filter((p) => p.kind === "point")) {
+    const on = changed.has(i.key), r = i.role === "origin" ? dot * 1.5 : dot;
+    const rad = (i.direction * Math.PI) / 180, tick = dot * 3.5;
+    const colour = on ? "var(--hl-line)" : i.role === "origin" ? "var(--accent)" : "var(--ink)";
+    svg += `<line x1="${i.at[0]}" y1="${i.at[1]}" x2="${i.at[0] + Math.sin(rad) * tick}" y2="${i.at[1] - Math.cos(rad) * tick}" stroke="${colour}" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+    svg += `<circle cx="${i.at[0]}" cy="${i.at[1]}" r="${r}" fill="${colour}"><title>${esc(i.key)}: at (${num(i.at[0])}, ${num(i.at[1])}), facing ${num(i.direction)}°</title></circle>`;
+  }
+  const diagram = frames.find((f) => f.kind === "diagram");
+  return svg + "</svg>" + `<div class="legend">${diagram ? `the diagram, ${num(diagram.size[0])} × ${num(diagram.size[1])} units · ` : ""}` +
+    "shapes outlined, grids dashed, cells shaded; each point's tick shows its direction, origins in blue; what this step moved is highlighted</div>";
+}
+
+function placedText(step, final) {
+  if (step.placed === null) return '<span class="empty">this bench does not place</span>';
+  if (!final) return `<span class="empty">placement follows once the container layout has made all ${step.adjustments.length} of its adjustments</span>`;
+  if (!step.placed.length) return '<span class="empty">nothing moved: placement wrote nothing</span>';
+  let html = `<div class="sub" style="margin:0 0 6px">one mutation, an upsert of ${step.placed.length} annotation${step.placed.length > 1 ? "s" : ""}</div>`;
+  html += "<table><tr><th>of</th><th></th><th>absolute</th><th>size or direction</th></tr>";
+  for (const row of step.placed) {
+    const [of, kind, absolute] = row;
+    const rest = kind === "frame" ? `${num(row[4][0])} × ${num(row[4][1])}` : `${num(row[4])}°`;
+    html += `<tr><td>${esc(of)}</td><td class="muted">${kind}</td><td>(${num(absolute[0])}, ${num(absolute[1])})</td><td>${rest}</td></tr>`;
+  }
+  return html + "</table>";
+}
+
+function setMode(m) {
+  mode = m;
+  try { localStorage.setItem("container-trace-mode", m); } catch (e) { /* storage unavailable */ }
+  show();
+}
+document.getElementById("show-container").onclick = () => setMode("container");
+document.getElementById("show-physical").onclick = () => setMode("physical");
+
 function show() {
   const { nb, c } = cases[at.k], step = c.steps[at.m];
   const a = step.adjustments[at.a] || null;
@@ -301,8 +384,21 @@ function show() {
     ? `<div class="what">refused<span class="badge error">error</span></div><div class="sub">${esc(step.error)}</div>`
     : `<div class="what">${adjustmentText(a)}</div>` +
       (step.adjustments.length ? `<div class="sub">${at.a + 1} of ${step.adjustments.length} for this mutation</div>` : "");
-  document.getElementById("layout").innerHTML = layoutView(state, a);
-  document.getElementById("effect").innerHTML = step.error ? '<span class="empty">the layout is unchanged</span>' : effectText(a, state);
+  const final = at.a === count(step) - 1; // placement follows the mutation's last adjustment
+  for (const [id, m] of [["show-container", "container"], ["show-physical", "physical"]]) {
+    const b = document.getElementById(id);
+    b.classList.toggle("on", mode === m); b.setAttribute("aria-pressed", String(mode === m));
+  }
+  if (mode === "physical") {
+    const items = final ? step.physical_after : step.physical_before;
+    document.getElementById("layout").innerHTML = physicalView(items, final ? changedKeys(step.physical_before, step.physical_after) : new Set());
+    document.getElementById("effect-title").textContent = "Placement";
+    document.getElementById("effect").innerHTML = placedText(step, final);
+  } else {
+    document.getElementById("layout").innerHTML = layoutView(state, a);
+    document.getElementById("effect-title").textContent = "Effect on the layout";
+    document.getElementById("effect").innerHTML = step.error ? '<span class="empty">the layout is unchanged</span>' : effectText(a, state);
+  }
   const lastCase = at.k === cases.length - 1, lastStep = at.m === c.steps.length - 1;
   document.getElementById("prev").disabled = at.k === 0 && at.m === 0 && at.a === 0;
   document.getElementById("next").disabled = lastCase && lastStep && at.a === count(step) - 1;

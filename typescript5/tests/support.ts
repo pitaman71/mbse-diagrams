@@ -218,7 +218,6 @@ export class Bench {
 
   step(kind: string, args: unknown[], paths: string[], spec: boolean | Record<string, any> = false,
     ...specs: Spec[]): string {
-    this.placed = "";
     const tx = this.expression(paths, spec, ...specs);
     const adjusted = this.apply(kind, args, tx);
     this.journal.push([kind, args, Json.dumps(Plain.ToPlain(this.store).Transaction(tx)), adjusted, this.placed]);
@@ -228,6 +227,7 @@ export class Bench {
   /** Runs the mutation `tx`, then the `Container` function that follows a mutation of `kind`, in a transaction of its
    * own, or first, for a removal: its adjustments, or its error, as text. */
   apply(kind: string, args: unknown[], tx: any): string {
+    this.placed = "";
     const box = (args[0] ?? "") as string;
     const refused = (error: unknown): string => {
       if (error instanceof Error && error.name === "ValueError") return `ValueError: ${error.message}`;

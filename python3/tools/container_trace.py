@@ -1,5 +1,5 @@
-"""Records the mutations the container tests make, and the container layout's adjustments to each, and writes a page to
-step through them.
+"""Records the mutations the container and placement tests make, the container layout's adjustments to each, and the
+physical layout each leaves, and writes a page to step through them.
 
     cd python3 && uv run python tools/container_trace.py [--open]
 
@@ -8,8 +8,12 @@ with the bench's steps wrapped: each step is recorded with the case it belongs t
 title`), its mutation, as the bench journals it, the adjustments the container layout made to it, and its container's
 data model and container model before and after. The container model is then replayed one adjustment at a time, so
 that the page shows each adjustment's state; replayed, each step must end where the container layout did, which the
-tool checks. Nothing in the notebooks is copied or changed. The page is written to `tools/.trace/container.html`, which
-`--open` opens in a browser.
+tool checks. Each step also records the physical layout of the whole diagram before and after it, and the frames and
+placements its placement mutation wrote; the page's third column shows either layout, toggled. A notebook that does not
+itself deal in `Physical` builds its benches without placement: the tool places them, with a minimum shape size and a
+margin, so that shapes with no points can be seen, and its assertions, on the container layout, are unaffected. Nothing
+in the notebooks is copied or changed. The page is written to `tools/.trace/container.html`, which `--open` opens in a
+browser.
 
 A tool for reading the tests, not a test: Python only, standard library only beyond the package itself.
 """
@@ -35,6 +39,7 @@ CASE = re.compile(r"^##\s+([A-Z]+-\d+[a-z]?)\s+·\s+(.*)$", re.M)
 sys.path.insert(0, str(TESTS))
 import support  # noqa: E402  (the bench, from the tests' folder)
 from mbse.Diagrams.Framework import Container  # noqa: E402
+from mbse.Schemas.Framework import JSON, Plain  # noqa: E402
 
 
 class Recorder:
@@ -55,6 +60,47 @@ class Recorder:
 
 
 RECORDER = Recorder()
+PLACE = {"force": False}  # whether the notebook running builds benches the tool should place
+
+
+def physical_model(bench: Any) -> list[dict[str, Any]] | None:
+    """The whole diagram's physical layout: each frame, of the diagram, a grid, a cell or a shape, and each point's
+    placement, keyed by its path; None for a bench that does not place."""
+    if not bench.physical:
+        return None
+    items: list[dict[str, Any]] = []
+
+    def framed(x: Any, key: str, kind: str, label: str) -> None:
+        for e in x.frame:
+            f = e.frame
+            items.append({"key": key, "kind": kind, "label": label, "at": [f.absolute.x.get(), f.absolute.y.get()],
+                          "size": [f.size.width.get(), f.size.height.get()]})
+
+    def visit(x: Any, key: str, kind: str) -> None:
+        framed(x, key, kind, support.name_of(x))
+        if kind == "shape":
+            for member in ("origin", "borders", "extents"):
+                for e in getattr(x, member):
+                    for q in e.point.placement:
+                        p = q.placement
+                        items.append({"key": f"{key}:{support.name_of(e.point)}", "kind": "point", "role": member,
+                                      "label": support.name_of(e.point), "at": [p.absolute.x.get(), p.absolute.y.get()],
+                                      "direction": p.direction.get()})
+        for e in x.grid:
+            grid = e.grid
+            framed(grid, f"{key}/grid", "grid", "grid")
+            for k in grid.cells:
+                cell = f"{key}/grid/{k.cell.row.get()},{k.cell.column.get()}"
+                framed(k.cell, cell, "cell", f"{k.cell.row.get()},{k.cell.column.get()}")
+                for h in k.cell.children:
+                    name = support.name_of(h.shape)
+                    visit(h.shape, f"{key}.{name}" if key else name, "shape")
+
+    try:
+        visit(bench.overview, "", "diagram")
+    except Exception:
+        return None
+    return items
 
 
 def data_model(bench: Any, box: str) -> dict[str, Any] | None:
@@ -155,6 +201,9 @@ def describe(kind: str, args: tuple[Any, ...]) -> str:
         return f"remove {', '.join(args[1:])} from {box}"
     if kind == "turn":
         return f"turn {box}'s cells to {args[1]:g}°"
+    if kind == "points":
+        names = ", ".join(str(e[0]) for e in args[1])
+        return f"give {box} its origin" + (f" and points {names}, each by a vector from it" if names else " and points")
     return "change the logical layout: " + ", ".join(args) if args else "make the diagram"
 
 
@@ -167,8 +216,10 @@ def wrap() -> None:
         if not hasattr(self, "_recording"):
             return original(self, kind, args, paths, *specs, spec=spec)
         data_before, model_before = data_model(self, box), container_model(self, box)
+        physical_before = physical_model(self)
         adjusted = original(self, kind, args, paths, *specs, spec=spec)
         data_after, model_after = data_model(self, box), container_model(self, box)
+        physical_after = physical_model(self)
         mutation = json.loads(self.journal[-1][2])
         error = adjusted if adjusted.startswith("ValueError") else None
         adjustments = [] if error or not adjusted else json.loads(adjusted)
@@ -181,7 +232,8 @@ def wrap() -> None:
         RECORDER.case["steps"].append({
             "kind": kind, "box": box, "mutation": describe(kind, args), "expression": mutation, "error": error,
             "data_before": data_before, "data_after": data_after, "model_before": model_before,
-            "adjustments": adjustments, "states": states,
+            "adjustments": adjustments, "states": states, "physical_before": physical_before,
+            "physical_after": physical_after, "placed": json.loads(self.placed) if self.placed else None,
         })
         return adjusted
 
@@ -190,11 +242,29 @@ def wrap() -> None:
 
     @functools.wraps(init)
     def recording(self: Any, fresh: bool = True, physical: bool = False) -> None:
-        init(self, fresh, physical)
+        forced = PLACE["force"] and not physical
+        init(self, fresh, physical or forced)
         if fresh:
+            if forced:  # placed by the tool: shapes with no points are seen at the minimum size
+                self.tune(minimum_size=1, margin=0.25)
+                self.journal.pop()  # the tool's, not the notebook's: its steps keep the indices it asserts
+                self._placed_by_tool = True
             self._recording = True  # a bench the notebook made; a replay's, made empty, records nothing
 
     support.Bench.__init__ = recording
+    replay = support.Bench.replay
+
+    @functools.wraps(replay)
+    def replaying(self: Any) -> list[int]:
+        if not getattr(self, "_placed_by_tool", False):
+            return replay(self)
+        # a bench the tool placed: its notebook asserts the container layout's replay, and may have written to the store
+        # outside the journal, which placement would see and a replay could not; only its adjustments are compared
+        again = support.Bench(False, True)
+        return [i for i, (kind, args, entry, adjusted, _) in enumerate(self.journal)
+                if again._apply(kind, args, Plain.FromPlain(again.store).Transaction(JSON.loads(entry))) != adjusted]
+
+    support.Bench.replay = replaying
 
 
 def run(notebook: Path) -> None:
@@ -203,6 +273,7 @@ def run(notebook: Path) -> None:
     title = next(("".join(c["source"]).splitlines()[0].lstrip("# ") for c in cells if c["cell_type"] == "markdown"
                   and "".join(c["source"]).startswith("# ")), notebook.stem)
     RECORDER.start(notebook.name, title)
+    PLACE["force"] = "Physical" not in notebook.read_text()
     namespace: dict[str, Any] = {"__name__": "__main__"}
     for cell in cells:
         source = "".join(cell["source"])
@@ -216,7 +287,7 @@ def run(notebook: Path) -> None:
 
 def main(argv: list[str]) -> int:
     wrap()
-    notebooks = sorted(p for p in TESTS.glob("*.ipynb") if "Bench()" in p.read_text())
+    notebooks = sorted(p for p in TESTS.glob("*.ipynb") if "Bench(" in p.read_text())
     os.chdir(TESTS)
     for notebook in notebooks:
         try:

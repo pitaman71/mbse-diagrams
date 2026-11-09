@@ -48,7 +48,7 @@ python3 ../mbse-basis/scripts/polyrepo.py clone # mbse-schemas, beside this repo
 python3 ../mbse-basis/scripts/polyrepo.py check # the siblings are present and compatible with siblings.json
 cd python3 && uv sync                           # Python: use uv, never pip
 uv run coverage run -m pytest && uv run coverage combine && uv run coverage report
-uv run python tools/container_trace.py --open   # step through the tests' mutations and the container's adjustments
+uv run python tools/container_trace.py --open   # step through the tests' mutations, the container's adjustments and placement
 
 cd typescript5 && nvm use && npm install        # TypeScript: Node 22 or later
 npm run coverage                                # type-checks, runs every notebook, gates at 100%

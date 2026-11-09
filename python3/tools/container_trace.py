@@ -9,12 +9,12 @@ title`), its mutation, as the bench journals it, the adjustments the container l
 data model and container model before and after. The container model is then replayed one adjustment at a time, so
 that the page shows each adjustment's state; replayed, each step must end where the container layout did, which the
 tool checks. Each step also records the physical layout of the whole diagram before and after it, and the frames and
-placements its placement mutation wrote; the page's third column shows either layout, toggled, the physical layout
-after the whole mutation, as the data model is, since placement follows a mutation once, not each adjustment. A notebook that does not
-itself deal in `Physical` builds its benches without placement: the tool places them, with a minimum shape size and a
-margin, so that shapes with no points can be seen, and its assertions, on the container layout, are unaffected. Nothing
-in the notebooks is copied or changed. The page is written to `tools/.trace/container.html`, which `--open` opens in a
-browser.
+placements its placement mutation wrote; the page's third column shows either layout, toggled, the physical layout after
+the whole mutation, as the data model is, since placement follows a mutation once, not each adjustment. A notebook that
+does not itself deal in `Physical` builds its benches without placement: the tool places them, with a minimum shape size
+and a margin, so that shapes with no points can be seen, and its assertions, on the container layout, are unaffected.
+Nothing in the notebooks is copied or changed. The page is written to `tools/.trace/container.html`, which `--open`
+opens in a browser.
 
 A tool for reading the tests, not a test: Python only, standard library only beyond the package itself.
 """

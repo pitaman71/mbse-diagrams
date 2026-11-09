@@ -10,7 +10,8 @@
  * `scaling_factor` how a unit length scales from a container to its children, at each level of containment: each shape,
  * container and cell has its own unit length, computed from its container's, up to the diagram. Its `margin`, 0 unless
  * set, is the collapsing margin between cells and around a grid, in diagram units at every level; its `minimum_size`, 0
- * unless set, a shape's least width and height, in units of its level.
+ * unless set, a shape's least width and height, in units of its level; and its `title_size`, 0.5 unless set, the height
+ * of the band at the top of a container shape that holds its title, above its children, in units of its level.
  *
  * Each annotation is owned through `Logical.Owns` by what it annotates, one each, so that it has its path and goes with
  * it, and plays its part through a relation of its own:
@@ -29,11 +30,12 @@
  * languages, so that what physical layout writes is data that either reads, and either writes the same.
  */
 
-/** A diagram's unit length, scaling factor, margin and minimum shape size, where it sets none. */
+/** A diagram's unit length, scaling factor, margin, minimum shape size and title size, where it sets none. */
 export const UNIT_LENGTH = 1.0;
 export const SCALING_FACTOR = 1.0;
 export const MARGIN = 0.0;
 export const MINIMUM_SIZE = 0.0;
+export const TITLE_SIZE = 0.5;
 
 /** The physical layout's schemas, defined in the store a transaction writes, after `Logical`'s and `Container`'s:
  * `store.transaction(Physical.install)`. Run again in a store, it finds each by its name and writes nothing. */
@@ -94,6 +96,7 @@ export function install(txn: any): any {
         scaling_factor: S.OfFloat, // how a unit length scales from a container to its children
         margin: S.OfFloat, // collapsing, between cells and around a grid, in diagram units, unscaled
         minimum_size: S.OfFloat, // a shape's least width and height, in units of its level
+        title_size: S.OfFloat, // the height of a container's title band, in units of its level
       }).adjacencies([(t: any) => t.name("frame").relation([_.DiagramFrame]).me("diagram")]),
       (_: any) => _.Shape.name("Logical.OfShape").adjacencies([
         (t: any) => t.name("frame").relation([_.ShapeFrame]).me("shape"),

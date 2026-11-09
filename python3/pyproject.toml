@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mbse-diagrams"
-version = "0.8.0"
+version = "0.9.0"
 description = "Diagrams of mbse-schemas data, laid out incrementally: logical, container and physical layouts, each a deterministic function of a mutation sequence"
 keywords = ["diagrams", "layout", "incremental layout", "visualization", "mbse", "sysml"]
 readme = "README.md"

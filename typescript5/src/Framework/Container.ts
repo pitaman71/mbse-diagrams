@@ -26,9 +26,10 @@
  * extents changed, the cells turned. A grid is a sequence of cells, placed in order: along a row, `span` cells, then
  * the next row down, where it grows rows; down a column, then the next column right, where it grows columns.
  * `layout(container, span, grows, cell_rotation)` gives a container its grid before its children; `rotate(container,
- * degrees)` turns its cells; `added(child)` places a child its container has just gained in the next cell;
- * `removing(child)` closes the gap a child about to be removed leaves; `adjoined(spec)` takes an adjacency spec just
- * added as its grid's last rule; `unjoining(spec)` drops the rule of a spec about to be removed, reverting its
+ * degrees)` turns its cells; `added(child)` places a child its container has just gained in the next cell, or a shape
+ * the diagram's top level has just gained, one made there or one that left its container; `removing(child)` closes the
+ * gap a child about to leave its container leaves, or a top-level shape about to move into a container;
+ * `adjoined(spec)` takes an adjacency spec just added as its grid's last rule; `unjoining(spec)` drops the rule of a spec about to be removed, reverting its
  * `to_shape` to its original insertion position where the rule held.
  *
  * After each mutation the grid settles. It held every rule but the ignored before the mutation, so only the rules the
@@ -185,10 +186,10 @@ export function added(child: any): Adjustment[] {
   return settle(grid, [...before, cell([[child, order]])], rulesOf(grid), new Set([child]), adjustments);
 }
 
-/** Anticipates the removal of `child` from its container, before the mutation that removes it, which deletes it and
- * the specs from and to it: it leaves its cell, the children after it move back one, a cell it leaves empty goes, and
- * its rules are dropped; then settles. Returns the adjustments, in order. Within a transaction of its own, before the
- * removal. */
+/** Anticipates `child` leaving its container, or the diagram's top level, before the mutation that moves it, which
+ * removes the specs from and to it: it leaves its cell, the children after it move back one, a cell it leaves empty
+ * goes, and its rules are dropped; then settles. The mutation deletes nothing: `added` then places it where it went.
+ * Returns the adjustments, in order. Within a transaction of its own, before the move. */
 export function removing(child: any): Adjustment[] {
   const grid = gridOf(container_of(child));
   const [span, grows]: [bigint, string] = [grid.span.get(), grid.grows.get()];
@@ -308,9 +309,10 @@ function repr(value: unknown): string {
   return typeof value === "string" ? `'${value}'` : String(value);
 }
 
+/** A shape's children; or the diagram's top-level shapes, its members with no container. */
 function childrenOf(container: any): any[] {
-  return container.as_schema().adjacencies.has("children")
-    ? [...container.children].map((e: any) => e.child) : [...container.shapes].map((e: any) => e.shape);
+  if (container.as_schema().adjacencies.has("children")) return [...container.children].map((e: any) => e.child);
+  return [...container.shapes].map((e: any) => e.shape).filter((s: any) => [...s.container].length === 0);
 }
 
 /** The diagram `container` is in, or is. */

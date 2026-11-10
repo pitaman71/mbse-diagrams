@@ -2,12 +2,16 @@
  * The suites' bench: a store with the layouts installed and one diagram, `overview`, and a step for each mutation the
  * container layout follows, each a transaction expression, journalled, then given to `Container`.
  *
- * A shape is named by its path in the diagram: `cpu` a top-level shape, `cpu.a` the child `a` of `cpu`. Each step runs
- * its mutation, then, in a transaction of its own, the `Container` function that follows it, and gives back the
- * adjustments it made, as JSON text, each shape by its name; or the error the function raised, as text. A removal is
- * the one the container layout anticipates: `Container.removing` runs first, while what it removes still exists.
- * `replay` runs the journal again, in a fresh store, and gives the steps whose adjustments differ: none, where the
- * layout is a function of its mutation sequence.
+ * A shape is named by its handle, the path it was made at: `cpu` a top-level shape, `cpu.a` the child `a` of `cpu`.
+ * Every shape is owned by the diagram, by its handle, which is unique in it, and is a member of it, contained or not;
+ * its container is a relation alone, so that a shape moved keeps its handle. A step that makes a shape writes its
+ * roles, membership and containment; every other step finds a shape by its handle alone. Names are shown without their
+ * container's part: `a`, for `cpu.a`. Each step runs its mutation, then, in a transaction of its own, the `Container` function that follows it, and gives back the
+ * adjustments it made, as JSON text, each shape by its name; or the error the function raised, as text. A move, out
+ * of a container or into one, is anticipated: `Container.removing` runs first, then `Container.added` places the shape
+ * where it went. `replay` runs the journal again, in a fresh store, and gives the steps whose adjustments differ, or
+ * whose placements differ by more than two millionths of a unit: none, where the layout is a function of its mutation
+ * sequence.
  */
 
 import { Builders, JSON as Json, Plain, Validators } from "@mbse/schemas/Framework";
@@ -24,11 +28,12 @@ export function symbol(path: string): string {
   return "s_" + path.replaceAll(".", "__");
 }
 
-/** A shape's name among its owner's; the diagram's, for the diagram; and a grid's or a cell's, its owners' names too,
- * `cpu/grid/0,1`, since every grid is a `grid` and cells of different grids share names. */
+/** A shape's name, the last part of its handle; the diagram's, for the diagram; and a grid's or a cell's, its owners'
+ * names too, `cpu/grid/0,1`, since every grid is a `grid` and cells of different grids share names. */
 export function name_of(x: any): string {
   const name = Logical.name_of(x) ?? "?";
   const kind = x.as_schema().name;
+  if (kind === "Logical.OfShape") return name.slice(name.lastIndexOf(".") + 1);
   if (kind !== "Container.OfGrid" && kind !== "Container.OfCell") return name;
   return `${name_of(Logical.owner_of(x))}/${name}`;
 }
@@ -79,9 +84,9 @@ export class Bench {
     return this.step("layout", [box, span, grows, cell_rotation], box ? [box] : []);
   }
 
-  /** A child `name` added to `box`, a shape, or the diagram where `box` is `""`. */
+  /** A child `name` made in `box`, a shape, or at the diagram's top level where `box` is `""`. */
   child(box: string, name: string): string {
-    return this.step("child", [box, name], [box ? `${box}.${name}` : name]);
+    return this.stepping("child", [box, name], box ? [box] : [], [path(box, name)], false, []);
   }
 
   /** An adjacency spec added from `box`'s child `a` to its child `b`, by `degrees`, owned by `a`. */
@@ -103,23 +108,42 @@ export class Bench {
       (x: any) => x.remove((e: any) => e.name(n)))));
   }
 
-  /** The children `names` removed from `box`, in one mutation, with the specs to them from their siblings. */
+  /** The children `names` removed from `box`, in one mutation: each leaves its container for the diagram's top level,
+   * deleting nothing, with its adjacency specs, from and to it. */
   unchild(box: string, ...names: string[]): string {
-    const removals: [string, string][] = [];
-    const paths = box ? [box] : [];
-    for (const n of names) {
-      for (const e of this.shape(path(box, n)).adjacent_from) {
-        const owner = [...e.adjacency.from_shape][0].shape;
-        if (!names.includes(name_of(owner))) {
-          paths.push(path(box, name_of(owner)));
-          removals.push([symbol(path(box, name_of(owner))), Logical.name_of(e.adjacency) as string]);
-        }
+    return this.relocate("unchild", [box, ...names], names.map((n) => path(box, n)), box, "");
+  }
+
+  /** The shape `handle` moved, in one mutation, from its container, or the diagram's top level, into `to`, a shape,
+   * keeping its handle and what it owns, with its adjacency specs, from and to it, removed. */
+  move(handle: string, to: string): string {
+    const container = Container.container_of(this.shape(handle));
+    const here = container.as_schema().name === "Logical.OfDiagram" ? "" : Logical.name_of(container) as string;
+    return this.relocate("move", [handle, to], [handle], here, to);
+  }
+
+  /** The mutation that takes the shapes `handles` from `here` to `to`, each `""` for the diagram's top level. */
+  private relocate(kind: string, args: unknown[], handles: string[], here: string, to: string): string {
+    const paths = [...[here, to].filter((p) => p), ...handles];
+    const specs: Spec[] = [];
+    for (const handle of handles) {
+      const s = symbol(handle);
+      if (here) specs.push((_: any) => _[symbol(here)].children((x: any) => x.remove((e: any) => e.child(_[s]))));
+      if (to) specs.push((_: any) => _[symbol(to)].children([_[s]]));
+      const shape = this.shape(handle);
+      for (const e of shape.adjacent_to) { // its own specs
+        const n = Logical.name_of(e.adjacency) as string;
+        specs.push((_: any) => _[s].owns((x: any) => x.remove((f: any) => f.name(n))));
+      }
+      for (const e of shape.adjacent_from) { // its siblings' specs to it
+        const owner = Logical.name_of([...e.adjacency.from_shape][0].shape) as string;
+        if (handles.includes(owner)) continue;
+        paths.push(owner);
+        const n = Logical.name_of(e.adjacency) as string;
+        specs.push((_: any) => _[symbol(owner)].owns((x: any) => x.remove((f: any) => f.name(n))));
       }
     }
-    const s = symbol(box);
-    return this.step("unchild", [box, ...names], paths, false,
-      ...names.map((n): Spec => (_: any) => _[s].owns((x: any) => x.remove((e: any) => e.name(n)))),
-      ...removals.map(([o, n]): Spec => (_: any) => _[o].owns((x: any) => x.remove((e: any) => e.name(n)))));
+    return this.step(kind, args, paths, false, ...specs);
   }
 
   /** `box`'s cells turned by `degrees`: a change of the container layout alone. */
@@ -130,16 +154,15 @@ export class Bench {
   /** A mutation of the logical layout alone, which the container layout does not follow: the shapes `paths`, made
    * where they are not, and `specs` written over them. */
   logical(paths: string[], ...specs: Spec[]): string {
-    return this.step("logical", paths, paths, false, ...specs);
+    const made = paths.flatMap((p) => p.split(".").map((_, k, parts) => parts.slice(0, k + 1).join(".")));
+    return this.stepping("logical", paths, paths, [...new Set(made)], false, specs);
   }
 
   // --- reading the layouts ---
 
-  /** The shape at `path`, or the diagram for `""`. */
+  /** The shape `at`, by its handle, or the diagram for `""`. */
   shape(at: string): any {
-    let shape = this.overview;
-    for (const name of at ? at.split(".") : []) shape = shape.owns({ name });
-    return shape;
+    return at ? this.overview.owns({ name: at }) : this.overview;
   }
 
   get overview(): any {
@@ -176,38 +199,51 @@ export class Bench {
     return boxes.map((box) => Validators.Validate(this.store).Reachable(this.store.Logical.OfShape, this.shape(box)));
   }
 
-  /** Runs the journal again, in order, in a fresh store, and gives the steps whose adjustments differ. */
+  /** Runs the journal again, in order, in a fresh store, and gives the steps whose adjustments differ, or whose
+   * placements differ by more than two millionths of a unit, as Python's Kiwi's last bits may. */
   replay(): number[] {
     const again = new Bench(false, this.physical);
     const differ: number[] = [];
     this.journal.forEach(([kind, args, entry, adjusted, placed], i) => {
       const tx = Plain.FromPlain(again.store).Transaction(Json.loads(entry));
-      if (again.apply(kind, args, tx) !== adjusted || again.placed !== placed) differ.push(i);
+      const was = again.apply(kind, args, tx) !== adjusted;
+      if (was || (placed !== again.placed && (!placed || !again.placed || unmatched(placed, again.placed).length))) {
+        differ.push(i);
+      }
     });
     return differ;
   }
 
   // --- running a step ---
 
-  /** The mutation that finds the shapes at `paths` by their paths, making them where they are not, each owned by its
-   * container and in its role there, and writes `specs` over them. */
+  /** The mutation that finds the shapes `paths` and `made` by their handles, each owned by the diagram, making those
+   * it does not find, writes the roles of those `made`, a member of the diagram and in its container where it has one,
+   * and writes `specs` over them. */
   expression(paths: string[], spec: boolean | Record<string, any>, ...specs: Spec[]): any {
+    return this.expressing(paths, [], spec, specs);
+  }
+
+  private expressing(paths: string[], made: string[], spec: boolean | Record<string, any>, specs: Spec[]): any {
     const L = this.store.Logical;
-    const symbols: Record<string, any> = { directory: L.DiagramDirectory, [symbol("")]: L.OfDiagram };
+    const d = symbol("");
+    const symbols: Record<string, any> = { directory: L.DiagramDirectory, [d]: L.OfDiagram };
     const found: Spec[] = [
-      (_: any) => _.directory.owns({ overview: (e: any) => e.owned(_[symbol("")]) }),
-      (_: any) => _.directory.diagrams([_[symbol("")]]),
+      (_: any) => _.directory.owns({ overview: (e: any) => e.owned(_[d]) }),
+      (_: any) => _.directory.diagrams([_[d]]),
     ];
-    for (const at of paths) {
-      const parts = at.split(".");
-      parts.forEach((key, k) => {
-        const [here, up] = [parts.slice(0, k + 1).join("."), parts.slice(0, k).join(".")];
-        if (symbol(here) in symbols) return;
-        symbols[symbol(here)] = L.OfShape;
-        const [s, u, role] = [symbol(here), symbol(up), k === 0 ? "shapes" : "children"];
-        found.push((_: any) => _[u].owns({ [key]: (e: any) => e.owned(_[s]) }));
-        found.push((_: any) => _[u][role]([_[s]]));
-      });
+    const find = (handle: string): void => {
+      if (symbol(handle) in symbols) return;
+      symbols[symbol(handle)] = L.OfShape;
+      found.push((_: any) => _[d].owns({ [handle]: (e: any) => e.owned(_[symbol(handle)]) }));
+    };
+    for (const handle of [...paths, ...made]) find(handle);
+    for (const handle of made) { // a member of the diagram, and in its container where it has one
+      found.push((_: any) => _[d].shapes([_[symbol(handle)]]));
+      if (handle.includes(".")) {
+        const up = handle.slice(0, handle.lastIndexOf("."));
+        find(up);
+        found.push((_: any) => _[symbol(up)].children([_[symbol(handle)]]));
+      }
     }
     // after their owners', so that the upsert finds each by its owner and name, never by ranging over all
     if (spec === true) symbols.spec = L.OfAdjacency;
@@ -218,7 +254,12 @@ export class Bench {
 
   step(kind: string, args: unknown[], paths: string[], spec: boolean | Record<string, any> = false,
     ...specs: Spec[]): string {
-    const tx = this.expression(paths, spec, ...specs);
+    return this.stepping(kind, args, paths, [], spec, specs);
+  }
+
+  private stepping(kind: string, args: unknown[], paths: string[], made: string[], spec: boolean | Record<string, any>,
+    specs: Spec[]): string {
+    const tx = this.expressing(paths, made, spec, specs);
     const adjusted = this.apply(kind, args, tx);
     this.journal.push([kind, args, Json.dumps(Plain.ToPlain(this.store).Transaction(tx)), adjusted, this.placed]);
     return adjusted;
@@ -233,15 +274,15 @@ export class Bench {
       if (error instanceof Error && error.name === "ValueError") return `ValueError: ${error.message}`;
       throw error;
     };
-    if (kind === "unchild" || kind === "unspec") { // a removal is anticipated: its adjustments come before the mutation
+    const moved = kind === "unchild" ? (args.slice(1) as string[]).map((n) => path(box, n))
+      : kind === "move" ? [args[0] as string] : [];
+    if (this.physical) for (const handle of moved) this.placement?.removing(this.shape(handle)); // placed again
+    if (kind === "unchild" || kind === "move" || kind === "unspec") { // anticipated: before the mutation
       let named = "";
-      if (this.physical && kind === "unchild") {
-        for (const n of args.slice(1) as string[]) this.placement?.removing(this.shape(path(box, n)));
-      }
+      let adjustments: unknown[] = [];
       try {
         this.store.transaction(() => {
-          const adjustments = kind === "unchild"
-            ? (args.slice(1) as string[]).flatMap((n) => Container.removing(this.shape(path(box, n))))
+          adjustments = moved.length ? moved.flatMap((h) => Container.removing(this.shape(h)))
             : [...this.shape(path(box, args[1] as string)).adjacent_to]
               .filter((e: any) => name_of([...e.adjacency.to_shape][0].shape) === args[2])
               .flatMap((e: any) => Container.unjoining(e.adjacency));
@@ -251,6 +292,12 @@ export class Bench {
         named = refused(error);
       }
       const [after] = this.store.transaction(tx);
+      if (moved.length && !named.startsWith("ValueError")) { // each placed where it went
+        this.store.transaction(() => {
+          adjustments = [...adjustments, ...moved.flatMap((h) => Container.added(this.shape(h)))];
+        });
+        named = text(adjustments);
+      }
       this.follow([...after.values()]);
       return named;
     }
@@ -295,17 +342,7 @@ export class Bench {
    * mutation ends as placing it all at once does. */
   afresh(): string[] {
     const tx = new Placement.Layout(this.overview).follow([this.overview]);
-    const sorted = (rows: unknown[][]): unknown[][] => rows.sort((x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1));
-    const fresh = sorted(JSON.parse(tx === null ? "[]" : written(this.store, tx)));
-    const held = sorted(JSON.parse(this.held()));
-    const near = (x: unknown, y: unknown): boolean => (typeof x === "number" && typeof y === "number"
-      ? Math.abs(x - y) <= 2e-6 : Array.isArray(x) && Array.isArray(y)
-        ? x.length === y.length && x.every((v, i) => near(v, y[i])) : x === y);
-    const differ: string[] = [];
-    for (let i = 0; i < Math.max(fresh.length, held.length); i++) {
-      if (!near(fresh[i], held[i])) differ.push(JSON.stringify([fresh[i] ?? null, held[i] ?? null]));
-    }
-    return differ;
+    return unmatched(tx === null ? "[]" : written(this.store, tx), this.held());
   }
 
   /** Every frame and placement the store holds, as `written` gives them. */
@@ -389,9 +426,10 @@ export function written(store: any, tx: any): string {
       }
     }
   }
-  const name = (symbol: string): string => {
+  const name = (symbol: string): string => { // as `name_of` gives it
     const [up, key] = owner.get(symbol) as [string, string];
     const kind = schema(symbol);
+    if (kind === "Logical.OfShape") return key.slice(key.lastIndexOf(".") + 1);
     return kind === "Container.OfGrid" || kind === "Container.OfCell" ? `${name(up)}/${key}` : key;
   };
   return JSON.stringify([...values].map(([w, v]: [string, any]) => {
@@ -401,6 +439,22 @@ export function written(store: any, tx: any): string {
       ? [of, "frame", absolute, relative, [v.size.width, v.size.height], v.unit_length]
       : [of, "placement", absolute, relative, v.direction];
   }));
+}
+
+/** The rows of `these` and `those`, as `written` gives them, that no row of the other matches to within two millionths
+ * of a unit, each as `[this, null]` or `[null, that]`: names repeat, so rows are matched, not paired. */
+function unmatched(these: string, those: string): string[] {
+  const near = (x: unknown, y: unknown): boolean => (typeof x === "number" && typeof y === "number"
+    ? Math.abs(x - y) <= 2e-6 : Array.isArray(x) && Array.isArray(y)
+      ? x.length === y.length && x.every((v, i) => near(v, y[i])) : x === y);
+  const left = JSON.parse(those) as unknown[];
+  const differ: string[] = [];
+  for (const row of JSON.parse(these) as unknown[]) {
+    const k = left.findIndex((other) => near(row, other));
+    if (k < 0) differ.push(JSON.stringify([row, null]));
+    else left.splice(k, 1);
+  }
+  return [...differ, ...left.map((other) => JSON.stringify([null, other]))];
 }
 
 function frameRow(of: any, f: any): unknown[] {

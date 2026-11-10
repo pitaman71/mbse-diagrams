@@ -25,9 +25,11 @@
  *   extent points, or its border points where it has none, and its grid, centred on its origin, its title's band above
  *   it; its frame, the least box (`weak`) holding its content and its minimum size, centred on its content.
  * - A grid. Columns follow each other a margin apart, the first and last a margin from the grid's edge; each column is
- *   the least width (`weak`) holding its cells, and rows likewise. A cell's shapes are stacked along its grid's axis, a
- *   margin between each, the stack centred along it and each shape across it. An empty grid has no size. The
- *   diagram's grid is at (0, 0), and the diagram is its size.
+ *   the least width (`weak`) holding its cells, and rows likewise. A cell is a container: its shapes are stacked along
+ *   its grid's axis, a margin between each and a margin from its edges, the stack centred along it and each shape
+ *   across it. Margins collapse only between siblings: between neighbouring cells, or shapes in one cell, there is one;
+ *   between a container and what it holds, a grid and its cells or a cell and its shapes, each keeps its own. An empty
+ *   grid has no size. The diagram's grid is at (0, 0), and the diagram is its size.
  *
  * A value moved by less than a millionth of a unit has not moved, and every value written is rounded to a millionth of
  * a unit, so that the engine's floating-point noise is never a move. Two layouts of one diagram, one followed mutation
@@ -309,8 +311,8 @@ export class Layout {
         const label = `cell ${cell.row},${cell.column}.${k.key}`;
         add(`${label}.across`, c("==", 0, [2, w(sAcross)], [1, w(sAcrossSize)], [-2, v(across)],
           [-1, v(acrossSize)]));
-        add(`${label}.inside`, c(">=", 0, [1, w(sAcross)], [-1, v(across)]));
-        if (i === 0) add(`${label}.first`, c(">=", 0, [1, w(sAlong)], [-1, v(along)]));
+        add(`${label}.inside`, c(">=", -m, [1, w(sAcross)], [-1, v(across)])); // a margin in from its cell
+        if (i === 0) add(`${label}.first`, c(">=", -m, [1, w(sAlong)], [-1, v(along)]));
         else {
           const p = (n: string): string => `${(kids[i - 1] as Element).key}.${n}`;
           add(`${label}.after`, c("==", -m, [1, w(sAlong)], [-1, p(sAlong)], [-1, p(sAlongSize)]));

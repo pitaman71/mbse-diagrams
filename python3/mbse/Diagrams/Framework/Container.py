@@ -25,8 +25,9 @@ data: a grid made, a shape placed, moved or leaving its cell, a rule held, met, 
 the cells turned. A grid is a sequence of cells, placed in order: along a row, `span` cells, then the next row down,
 where it grows rows; down a column, then the next column right, where it grows columns. `layout(container, span,
 grows, cell_rotation)` gives a container its grid before its children; `rotate(container, degrees)` turns its cells;
-`added(child)` places a child its container has just gained in the next cell; `removing(child)` closes the gap a child
-about to be removed leaves; `adjoined(spec)` takes an adjacency spec just added as its grid's last rule;
+`added(child)` places a child its container has just gained in the next cell, or a shape the diagram's top level has
+just gained, one made there or one that left its container; `removing(child)` closes the gap a child about to leave
+its container leaves, or a top-level shape about to move into a container; `adjoined(spec)` takes an adjacency spec just added as its grid's last rule;
 `unjoining(spec)` drops the rule of a spec about to be removed, reverting its `to_shape` to its original insertion
 position where the rule held.
 
@@ -189,10 +190,10 @@ def added(child: Any) -> list[dict[str, Any]]:
 
 
 def removing(child: Any) -> list[dict[str, Any]]:
-    """Anticipates the removal of `child` from its container, before the mutation that removes it, which deletes it and
-    the specs from and to it: it leaves its cell, the children after it move back one, a cell it leaves empty goes, and
-    its rules are dropped; then settles. Returns the adjustments, in order. Within a transaction of its own, before the
-    removal."""
+    """Anticipates `child` leaving its container, or the diagram's top level, before the mutation that moves it, which
+    removes the specs from and to it: it leaves its cell, the children after it move back one, a cell it leaves
+    empty goes, and its rules are dropped; then settles. The mutation deletes nothing: `added` then places it where
+    it went. Returns the adjustments, in order. Within a transaction of its own, before the removal."""
     grid = _grid(container_of(child))
     span, grows = grid.span.get(), grid.grows.get()
     before = _sequence(grid)
@@ -295,8 +296,10 @@ def _from_shape(spec: Any) -> Any:
 
 
 def _children(container: Any) -> list[Any]:
-    return [e.child for e in container.children] if "children" in container.as_schema().adjacencies \
-        else [e.shape for e in container.shapes]
+    """A shape's children; or the diagram's top-level shapes, its members with no container."""
+    if "children" in container.as_schema().adjacencies:
+        return [e.child for e in container.children]
+    return [e.shape for e in container.shapes if not list(e.shape.container)]
 
 
 def _diagram_of(container: Any) -> Any:

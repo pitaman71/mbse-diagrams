@@ -76,7 +76,7 @@ class _Element:
     turn: float = 0.0
     constraints: dict[str, Constraint] = field(default_factory=dict)
     annotations: dict[Any, _Annotation] = field(default_factory=dict)
-    children: set[Any] = field(default_factory=set)
+    children: dict[Any, None] = field(default_factory=dict)  # an ordered set: removals in a fixed order
 
 
 def unit_length(x: Any) -> float:
@@ -276,7 +276,7 @@ class Layout:
         annotations[grid] = _Annotation(grid, "frame", "grid", lambda: [
             value("gL"), value("gT"), value("gL") - at()[0], value("gT") - at()[1], value("gW"), value("gH"), e.unit])
         cells = _cells_of(grid)
-        children: set[Any] = set()
+        children: dict[Any, None] = {}
         if not cells:
             add("grid.width", _c("==", 0, (1, v("gW"))))
             add("grid.height", _c("==", 0, (1, v("gH"))))
@@ -300,7 +300,7 @@ class Layout:
             kids: list[_Element] = []
             for s in shapes:
                 child = self._element(s)
-                children.add(s)
+                children[s] = None
                 if child.unit != unit or child.turn != turn:  # a context its points are placed in
                     child.unit, child.turn = unit, turn
                     self._dirty[child] = None

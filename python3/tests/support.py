@@ -1,12 +1,17 @@
 """The suites' bench: a store with the layouts installed and one diagram, `overview`, and a step for each mutation the
 container layout follows, each a transaction expression, journalled, then given to `Container`.
 
-A shape is named by its path in the diagram: `cpu` a top-level shape, `cpu.a` the child `a` of `cpu`. Each step runs its
-mutation, then, in a transaction of its own, the `Container` function that follows it, and gives back the adjustments it
-made, as JSON text, each shape by its name; or the error the function raised, as text. A removal is the one the
-container layout anticipates: `Container.removing` runs first, while what it removes still exists. `replay` runs the
-journal again, in a fresh store, and gives the steps whose adjustments differ: none, where the layout is a function of
-its mutation sequence. A physical bench also places each step, by a `Placement.Layout`, and runs the mutation it writes.
+A shape is named by its handle, the path it was made at: `cpu` a top-level shape, `cpu.a` the child `a` of `cpu`. Every
+shape is owned by the diagram, by its handle, which is unique in it, and is a member of it, contained or not; its
+container is a relation alone, so that a shape moved keeps its handle. A step that makes a shape writes its roles,
+membership and containment; every other step finds a shape by its handle alone. Names are shown without their
+container's part: `a`, for `cpu.a`. Each step runs its mutation, then, in a transaction of its own, the `Container`
+function that follows it, and gives back the adjustments it made, as JSON text, each shape by its name; or the error the
+function raised, as text. A move, out of a container or into one, is anticipated: `Container.removing` runs first, then
+`Container.added` places the shape where it went. `replay` runs the journal again, in a fresh store, and gives the steps
+whose adjustments differ, or whose placements differ by more than two millionths of a unit: none, where the layout is a
+function of its mutation sequence. A physical bench also places each step, by a `Placement.Layout`, and runs the
+mutation it writes.
 """
 
 from __future__ import annotations
@@ -24,10 +29,13 @@ def symbol(path: str) -> str:
 
 
 def name_of(x: Any) -> str:
-    """A shape's name among its owner's; the diagram's, for the diagram; and a grid's or a cell's, its owners' names too,
-    `cpu/grid/0,1`, since every grid is a `grid` and cells of different grids share names."""
+    """A shape's name, the last part of its handle; the diagram's, for the diagram; and a grid's or a cell's, its
+    owners' names too, `cpu/grid/0,1`, since every grid is a `grid` and cells of different grids share names."""
     name = Logical.name_of(x) or "?"
-    if x.as_schema().name not in ("Container.OfGrid", "Container.OfCell"):
+    kind = x.as_schema().name
+    if kind == "Logical.OfShape":
+        return name.rsplit(".", 1)[-1]
+    if kind not in ("Container.OfGrid", "Container.OfCell"):
         return name
     return f"{name_of(Logical.owner_of(x))}/{name}"
 
@@ -69,9 +77,12 @@ def written(store: Any, tx: Any) -> str:
                     values.setdefault(symbol, {})[m["as_property"]["name"]] = m["as_property"]["mutations"][0]["set"][
                         "value"]
 
-    def name(symbol: str) -> str:
+    def name(symbol: str) -> str:  # as `name_of` gives it
         up, key = owner[symbol]
-        return f"{name(up)}/{key}" if schema(symbol) in ("Container.OfGrid", "Container.OfCell") else key
+        kind = schema(symbol)
+        if kind == "Logical.OfShape":
+            return key.rsplit(".", 1)[-1]
+        return f"{name(up)}/{key}" if kind in ("Container.OfGrid", "Container.OfCell") else key
 
     rows = []
     for w, v in values.items():
@@ -80,6 +91,27 @@ def written(store: Any, tx: Any) -> str:
         rows.append([of, "frame", absolute, relative, [v["size"]["width"], v["size"]["height"]], v["unit_length"]]
                     if schema(w) == "Physical.OfFrame" else [of, "placement", absolute, relative, v["direction"]])
     return json.dumps(number(rows), separators=(",", ":"))
+
+
+def _unmatched(these: str, those: str) -> list[str]:
+    """The rows of `these` and `those`, as `written` gives them, that no row of the other matches to within two
+    millionths of a unit, each as `[this, None]` or `[None, that]`: names repeat, so rows are matched, not paired."""
+    def near(x: Any, y: Any) -> bool:
+        if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            return abs(x - y) <= 2e-6
+        if isinstance(x, list) and isinstance(y, list):
+            return len(x) == len(y) and all(near(a, b) for a, b in zip(x, y))
+        return x == y
+
+    unmatched = json.loads(those)
+    differ = []
+    for row in json.loads(these):
+        match = next((other for other in unmatched if near(row, other)), None)
+        if match is None:
+            differ.append(json.dumps([row, None]))
+        else:
+            unmatched.remove(match)
+    return differ + [json.dumps([None, other]) for other in unmatched]
 
 
 def _frame_row(of: Any, f: Any) -> list[Any]:
@@ -132,8 +164,9 @@ class Bench:
         return self._step("layout", (box, span, grows, cell_rotation), [box] if box else [])
 
     def child(self, box: str, name: str) -> str:
-        """A child `name` added to `box`, a shape, or the diagram where `box` is `""`."""
-        return self._step("child", (box, name), [f"{box}.{name}" if box else name])
+        """A child `name` made in `box`, a shape, or at the diagram's top level where `box` is `""`."""
+        path = f"{box}.{name}" if box else name
+        return self._step("child", (box, name), [box] if box else [], made=[path])
 
     def spec(self, box: str, a: str, b: str, degrees: float) -> str:
         """An adjacency spec added from `box`'s child `a` to its child `b`, by `degrees`, owned by `a`."""
@@ -155,20 +188,37 @@ class Bench:
             lambda x: x.remove(lambda e: e.name(n))) for n in names])
 
     def unchild(self, box: str, *names: str) -> str:
-        """The children `names` removed from `box`, in one mutation, with the specs to them from their siblings."""
-        removals, paths = [], [box] if box else []
-        for n in names:
-            child = self.shape(self._path(box, n))
-            for e in child.adjacent_from:
+        """The children `names` removed from `box`, in one mutation: each leaves its container for the diagram's top
+        level, deleting nothing, with its adjacency specs, from and to it."""
+        return self._relocate("unchild", (box, *names), [self._path(box, n) for n in names], box, "")
+
+    def move(self, handle: str, to: str) -> str:
+        """The shape `handle` moved, in one mutation, from its container, or the diagram's top level, into `to`, a
+        shape, keeping its handle and what it owns, with its adjacency specs, from and to it, removed."""
+        container = Container.container_of(self.shape(handle))
+        here = "" if container.as_schema().name == "Logical.OfDiagram" else Logical.name_of(container)
+        return self._relocate("move", (handle, to), [handle], here, to)
+
+    def _relocate(self, kind: str, args: tuple[Any, ...], handles: list[str], here: str, to: str) -> str:
+        """The mutation that takes the shapes `handles` from `here` to `to`, each `""` for the diagram's top level."""
+        paths, specs = [p for p in (here, to) if p] + list(handles), []
+        for handle in handles:
+            shape, s = self.shape(handle), symbol(handle)
+            if here:
+                specs.append(lambda _, s=s: getattr(_, symbol(here)).children(
+                    lambda x: x.remove(lambda e: e.child(getattr(_, s)))))
+            if to:
+                specs.append(lambda _, s=s: getattr(_, symbol(to)).children([getattr(_, s)]))
+            for e in shape.adjacent_to:  # its own specs
+                specs.append(lambda _, s=s, n=Logical.name_of(e.adjacency): getattr(_, s).owns(
+                    lambda x: x.remove(lambda e: e.name(n))))
+            for e in shape.adjacent_from:  # its siblings' specs to it
                 (owner,) = [x.shape for x in e.adjacency.from_shape]
-                if name_of(owner) not in names:
-                    paths.append(self._path(box, name_of(owner)))
-                    removals.append((symbol(self._path(box, name_of(owner))), Logical.name_of(e.adjacency)))
-        s = symbol(box)
-        return self._step("unchild", (box, *names), paths,
-                          *[lambda _, n=n: getattr(_, s).owns(lambda x: x.remove(lambda e: e.name(n))) for n in names],
-                          *[lambda _, o=o, n=n: getattr(_, o).owns(lambda x: x.remove(lambda e: e.name(n)))
-                            for o, n in removals])
+                if Logical.name_of(owner) not in handles:
+                    paths.append(Logical.name_of(owner))
+                    specs.append(lambda _, o=symbol(Logical.name_of(owner)), n=Logical.name_of(e.adjacency): getattr(
+                        _, o).owns(lambda x: x.remove(lambda e: e.name(n))))
+        return self._step(kind, args, paths, *specs)
 
     def turn(self, box: str, degrees: float) -> str:
         """`box`'s cells turned by `degrees`: a change of the container layout alone."""
@@ -177,7 +227,8 @@ class Bench:
     def logical(self, paths: list[str], *specs: Any) -> str:
         """A mutation of the logical layout alone, which the container layout does not follow: the shapes `paths`,
         made where they are not, and `specs` written over them."""
-        return self._step("logical", tuple(paths), paths, *specs)
+        made = [".".join(p.split(".")[:k + 1]) for p in paths for k in range(len(p.split(".")))]
+        return self._step("logical", tuple(paths), paths, *specs, made=list(dict.fromkeys(made)))
 
     def tune(self, **tuning: float) -> str:
         """The diagram's physical tuning, `unit_length`, `scaling_factor`, `margin` and `minimum_size`, each given set: a
@@ -209,10 +260,7 @@ class Bench:
 
     def shape(self, path: str) -> Any:
         """The shape at `path`, or the diagram for `""`."""
-        shape = self.overview
-        for name in path.split(".") if path else []:
-            shape = shape.owns({"name": name})
-        return shape
+        return self.overview.owns({"name": path}) if path else self.overview
 
     @property
     def overview(self) -> Any:
@@ -246,13 +294,16 @@ class Bench:
         return [validate(self.store.Logical.OfShape, self.shape(box)) for box in boxes]
 
     def replay(self) -> list[int]:
-        """Runs the journal again, in order, in a fresh store, and gives the steps whose adjustments, or placements,
-        differ."""
+        """Runs the journal again, in order, in a fresh store, and gives the steps whose adjustments differ, or whose
+        placements differ by more than two millionths of a unit: Kiwi, in C++, orders some of its choices by where its
+        variables are in memory, so that its last bits may differ from one run to the next."""
         again = Bench(False, self.physical)
         differ = []
         for i, (kind, args, entry, adjusted, placed) in enumerate(self.journal):
             tx = Plain.FromPlain(again.store).Transaction(JSON.loads(entry))
-            if again._apply(kind, args, tx) != adjusted or again.placed != placed:
+            same = again._apply(kind, args, tx) == adjusted
+            moved = placed != again.placed and (not placed or not again.placed or _unmatched(placed, again.placed))
+            if not same or moved:
                 differ.append(i)
         return differ
 
@@ -261,19 +312,7 @@ class Bench:
         now, by more than two millionths of a unit, each by the name of what it annotates: none, where following
         mutation by mutation ends as placing it all at once does."""
         tx = Placement.Layout(self.overview).follow([self.overview])
-        fresh = sorted(json.loads("[]" if tx is None else written(self.store, tx)), key=json.dumps)
-        held = sorted(json.loads(self.held()), key=json.dumps)
-
-        def near(x: Any, y: Any) -> bool:
-            if isinstance(x, (int, float)) and isinstance(y, (int, float)):
-                return abs(x - y) <= 2e-6
-            if isinstance(x, list) and isinstance(y, list):
-                return len(x) == len(y) and all(near(a, b) for a, b in zip(x, y))
-            return x == y
-
-        width = max(len(fresh), len(held))
-        fresh, held = fresh + [None] * (width - len(fresh)), held + [None] * (width - len(held))
-        return [json.dumps([f, h]) for f, h in zip(fresh, held) if not near(f, h)]
+        return _unmatched("[]" if tx is None else written(self.store, tx), self.held())
 
     def held(self) -> str:
         """Every frame and placement the store holds, as `written` gives them."""
@@ -301,25 +340,30 @@ class Bench:
     def _path(box: str, name: str) -> str:
         return f"{box}.{name}" if box else name
 
-    def _expression(self, paths: list[str], *specs: Any, spec: bool | dict[str, Any] = False) -> Any:
-        """The mutation that finds the shapes at `paths` by their paths, making them where they are not, each owned by
-        its container and in its role there, and writes `specs` over them."""
+    def _expression(self, paths: list[str], *specs: Any, spec: bool | dict[str, Any] = False,
+                    made: list[str] | None = None) -> Any:
+        """The mutation that finds the shapes `paths` and `made` by their handles, each owned by the diagram, making
+        those it does not find, writes the roles of those `made`, a member of the diagram and in its container where it
+        has one, and writes `specs` over them."""
         L = self.store.Logical
         symbols: dict[str, Any] = {"directory": L.DiagramDirectory, symbol(""): L.OfDiagram}
-        found = [lambda _: _.directory.owns({"overview": lambda e: e.owned(getattr(_, symbol("")))}),
-                 lambda _: _.directory.diagrams([getattr(_, symbol(""))])]
-        for path in paths:
-            parts = path.split(".")
-            for k in range(len(parts)):
-                here, up = ".".join(parts[:k + 1]), ".".join(parts[:k])
-                if symbol(here) in symbols:
-                    continue
-                symbols[symbol(here)] = L.OfShape
-                role = "shapes" if k == 0 else "children"
-                found.append(lambda _, s=symbol(here), u=symbol(up), key=parts[k]: getattr(_, u).owns(
+        d = symbol("")
+        found = [lambda _: _.directory.owns({"overview": lambda e: e.owned(getattr(_, d))}),
+                 lambda _: _.directory.diagrams([getattr(_, d)])]
+        for handle in [*paths, *(made or [])]:
+            if symbol(handle) not in symbols:
+                symbols[symbol(handle)] = L.OfShape
+                found.append(lambda _, s=symbol(handle), key=handle: getattr(_, d).owns(
                     {key: lambda e: e.owned(getattr(_, s))}))
-                found.append(lambda _, s=symbol(here), u=symbol(up), role=role: getattr(getattr(_, u), role)(
-                    [getattr(_, s)]))
+        for handle in made or []:  # a member of the diagram, and in its container where it has one
+            found.append(lambda _, s=symbol(handle): getattr(_, d).shapes([getattr(_, s)]))
+            if "." in handle:
+                up = handle.rsplit(".", 1)[0]
+                if symbol(up) not in symbols:
+                    symbols[symbol(up)] = L.OfShape
+                    found.append(lambda _, s=symbol(up), key=up: getattr(_, d).owns(
+                        {key: lambda e: e.owned(getattr(_, s))}))
+                found.append(lambda _, s=symbol(handle), u=symbol(up): getattr(_, u).children([getattr(_, s)]))
         # after their owners', so that the upsert finds each by its owner and name, never by ranging over all
         if spec is True:
             symbols["spec"] = L.OfAdjacency
@@ -329,8 +373,8 @@ class Bench:
             lambda p: p.symbols(symbols).spec([*found, *specs])]))]))
 
     def _step(self, kind: str, args: tuple[Any, ...], paths: list[str], *specs: Any,
-              spec: bool | dict[str, Any] = False) -> str:
-        tx = self._expression(paths, *specs, spec=spec)
+              spec: bool | dict[str, Any] = False, made: list[str] | None = None) -> str:
+        tx = self._expression(paths, *specs, spec=spec, made=made)
         adjusted = self._apply(kind, args, tx)
         self.journal.append((kind, args, JSON.dumps(Plain.ToPlain(self.store).Transaction(tx)), adjusted, self.placed))
         return adjusted
@@ -352,20 +396,25 @@ class Bench:
         of its own, or first, for a removal: its adjustments, or its error, as text."""
         self.placed = ""
         box = args[0] if args else ""
-        if self.physical and kind == "unchild" and self.placement is not None:
-            for n in args[1:]:
-                self.placement.removing(self.shape(self._path(box, n)))
+        moved = ([self._path(box, n) for n in args[1:]] if kind == "unchild" else [args[0]] if kind == "move" else [])
+        if self.physical and self.placement is not None:
+            for handle in moved:  # placed again where it goes
+                self.placement.removing(self.shape(handle))
         try:
-            if kind in ("unchild", "unspec"):  # a removal is anticipated: its adjustments come before the mutation
+            if kind in ("unchild", "move", "unspec"):  # anticipated: these adjustments come before the mutation
                 with self.store.transaction():
-                    if kind == "unchild":
-                        adjustments = [a for n in args[1:] for a in Container.removing(self.shape(self._path(box, n)))]
+                    if moved:
+                        adjustments = [a for h in moved for a in Container.removing(self.shape(h))]
                     else:
                         adjustments = [a for e in self.shape(self._path(box, args[1])).adjacent_to
                                        if name_of([x.shape for x in e.adjacency.to_shape][0]) == args[2]
                                        for a in Container.unjoining(e.adjacency)]
                 named = text(adjustments)  # named while what it removes still exists
                 (after,) = self.store.transaction(tx)
+                if moved:  # each is placed where it went: its container, or the diagram's top level
+                    with self.store.transaction():
+                        adjustments += [a for h in moved for a in Container.added(self.shape(h))]
+                    named = text(adjustments)
                 self._follow(after)
                 return named
         except ValueError as error:

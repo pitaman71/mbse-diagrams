@@ -39,7 +39,7 @@ CASE = re.compile(r"^##\s+([A-Z]+-\d+[a-z]?)\s+·\s+(.*)$", re.M)
 
 sys.path.insert(0, str(TESTS))
 import support  # noqa: E402  (the bench, from the tests' folder)
-from mbse.Diagrams.Framework import Container, Physical  # noqa: E402
+from mbse.Diagrams.Framework import Container, Logical, Physical  # noqa: E402
 from mbse.Schemas.Framework import JSON, Plain  # noqa: E402
 
 
@@ -61,6 +61,12 @@ class Recorder:
 
 
 RECORDER = Recorder()
+
+
+def where(bench: Any, handle: str) -> str:
+    """The handle of the container the shape `handle` is in, or `""` for the diagram's top level."""
+    container = Container.container_of(bench.shape(handle))
+    return "" if container.as_schema().name == "Logical.OfDiagram" else Logical.name_of(container)
 PLACE = {"force": False}  # whether the notebook running builds benches the tool should place
 
 
@@ -116,7 +122,7 @@ def data_model(bench: Any, box: str) -> dict[str, Any] | None:
         return None
     if shape is None:
         return None
-    kids = [e.child for e in shape.children] if box else [e.shape for e in shape.shapes]
+    kids = [e.child for e in shape.children] if box else [e.shape for e in shape.shapes if not list(e.shape.container)]
     children = [{
         "name": support.name_of(child),
         "specs": [{"to": support.name_of([x.shape for x in e.adjacency.to_shape][0]),
@@ -203,7 +209,9 @@ def describe(kind: str, args: tuple[Any, ...]) -> str:
     if kind == "unspec":
         return f"remove the specs {args[1]} → {args[2]}"
     if kind == "unchild":
-        return f"remove {', '.join(args[1:])} from {box}"
+        return f"take {', '.join(args[1:])} out of {box}, to the diagram's top level"
+    if kind == "move":
+        return f"move {args[0]} into " + (args[1] or "the diagram's top level")
     if kind == "turn":
         return f"turn {box}'s cells to {args[1]:g}°"
     if kind == "points":
@@ -216,21 +224,30 @@ def wrap() -> None:
     original = support.Bench._step
 
     @functools.wraps(original)
-    def recorded(self: Any, kind: str, args: tuple[Any, ...], paths: list[str], *specs: Any, spec: bool = False) -> str:
-        box = args[0] if kind != "logical" and args else (paths[0].split(".")[0] if paths else "")
+    def recorded(self: Any, kind: str, args: tuple[Any, ...], paths: list[str], *specs: Any, spec: Any = False,
+                 made: list[str] | None = None) -> str:
         if not hasattr(self, "_recording"):
-            return original(self, kind, args, paths, *specs, spec=spec)
+            return original(self, kind, args, paths, *specs, spec=spec, made=made)
+        box = args[0] if kind != "logical" and args else (paths[0].split(".")[0] if paths else "")
+        if kind == "move" or (kind in ("spec", "unspec") and not box and paths):
+            box = where(self, args[0] if kind == "move" else paths[0])  # the container it is in, before
         data_before, model_before = data_model(self, box), container_model(self, box)
         physical_before = physical_model(self)
-        adjusted = original(self, kind, args, paths, *specs, spec=spec)
+        adjusted = original(self, kind, args, paths, *specs, spec=spec, made=made)
         data_after, model_after = data_model(self, box), container_model(self, box)
         physical_after = physical_model(self)
         mutation = json.loads(self.journal[-1][2])
         error = adjusted if adjusted.startswith("ValueError") else None
         adjustments = [] if error or not adjusted else json.loads(adjusted)
         states, state = [], model_before
+        moved = ({support.name_of(self.shape(support.Bench._path(args[0], n))) for n in args[1:]} if kind == "unchild"
+                 else {support.name_of(self.shape(args[0]))} if kind == "move" else set())
         for adjustment in adjustments:
-            state = play(state, adjustment)
+            if adjustment["kind"] == "place" and adjustment["shape"] in moved:
+                moved = set()  # where it went: another container's adjustments, after this one's
+                state = model_after
+            elif not moved or adjustment["kind"] != "place":
+                state = play(state, adjustment) if state is not model_after else state
             states.append(state)
         if adjustments and state != model_after:
             RECORDER.mismatches.append(f"{RECORDER.case['id']}: {describe(kind, args)}")

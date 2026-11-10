@@ -431,7 +431,7 @@ function show() {
     (placing ? "placement" : step.adjustments.length ? `adjustment ${at.a + 1} of ${step.adjustments.length}` : "no adjustments");
   document.getElementById("data").innerHTML = dataView(step.data_before, step.data_after);
   document.getElementById("mutation").innerHTML = `<div class="what">${esc(step.mutation)}</div>` +
-    (step.kind === "unchild" ? '<div class="sub">anticipated: the container layout adjusts first, while what the mutation deletes still exists</div>' : "") +
+    (step.kind === "unchild" || step.kind === "move" ? '<div class="sub">anticipated: the container layout adjusts first, then places the shape where it went</div>' : "") +
     `<details><summary>the transaction expression, as journalled</summary><pre>${esc(JSON.stringify(step.expression, null, 1))}</pre></details>`;
   document.getElementById("model").innerHTML = modelView(state, a);
   document.getElementById("adjustment").innerHTML = step.error

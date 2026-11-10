@@ -3,12 +3,16 @@
 
 Normal schemas, installed before use: `store.transaction(Logical.install)`. Each is a reference object, owned through
 one relation, `Logical.Owns`, keyed by a `name` unique among its owner's: a diagram by the singleton `Logical.Diagrams`;
-a shape by its diagram or the shape that contains it; a shape's points, vectors, segments and the adjacency specs from
-it by the shape. `Container` and `Physical` own theirs through it too. What part each plays is a relation of its own,
-which owns nothing:
+every shape by its diagram, contained or not
+([CAP-264: containment separate from ownership](mbse:mbse-basis/docs/capabilities/README.md#CAP-264)); a shape's
+points, vectors, segments and the adjacency specs from it by the shape. `Container` and `Physical` own theirs through it
+too. What part each plays is a relation of its own, which owns nothing:
 
-- a diagram is in the directory (`Logical.InDiagrams`), and a top-level shape in its diagram (`Logical.InDiagram`);
-- a child shape is in its container, one each (`Logical.Containment`), in the order it was added;
+- a diagram is in the directory (`Logical.InDiagrams`), and every shape a member of its diagram (`Logical.InDiagram`),
+  contained or not: containment is not membership;
+- a child shape is in its container, one each (`Logical.Containment`), in the order it was added; a shape with none is
+  at its diagram's top level, and moving a shape into or out of a container changes this entry alone, so that the
+  shape keeps its identity and what it owns;
 - a shape has one `origin` point (`Logical.Origin`), and `borders` and `extents` points (`Logical.Borders`,
   `Logical.Extents`), each connected to the origin by a vector;
 - a `Logical.OfVector` runs from its `start` point to its `end` point (`Logical.VectorStart`, `Logical.VectorEnd`),
@@ -77,7 +81,7 @@ def install(txn: Any) -> Any:
                 lambda t: t.name("directory").relation([_.InDiagrams]).me("diagram"),
                 lambda t: t.name("shapes").relation([_.InDiagram]).me("diagram"),
             ]),
-            role("Logical.InDiagram", "diagram", "shape", uniques=[["diagram"]]),  # a top-level shape of one diagram
+            role("Logical.InDiagram", "diagram", "shape", uniques=[["diagram"]]),  # every shape, of one diagram
             lambda _: _.OfShape.name("Logical.OfShape").ref(True).adjacencies([
                 lambda t: owned(t, _),
                 lambda t: owns(t, _),

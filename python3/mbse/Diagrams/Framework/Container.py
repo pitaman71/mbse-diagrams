@@ -191,9 +191,9 @@ def added(child: Any) -> list[dict[str, Any]]:
 
 def removing(child: Any) -> list[dict[str, Any]]:
     """Anticipates `child` leaving its container, or the diagram's top level, before the mutation that moves it, which
-    removes the specs from and to it: it leaves its cell, the children after it move back one, a cell it leaves empty
-    goes, and its rules are dropped; then settles. The mutation deletes nothing: `added` then places it where it went. Returns the adjustments, in order. Within a transaction of its own, before the
-    removal."""
+    removes the specs from and to it: it leaves its cell, the children after it move back one, a cell it leaves
+    empty goes, and its rules are dropped; then settles. The mutation deletes nothing: `added` then places it where
+    it went. Returns the adjustments, in order. Within a transaction of its own, before the removal."""
     grid = _grid(container_of(child))
     span, grows = grid.span.get(), grid.grows.get()
     before = _sequence(grid)

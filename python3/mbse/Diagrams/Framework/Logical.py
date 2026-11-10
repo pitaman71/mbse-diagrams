@@ -81,7 +81,7 @@ def install(txn: Any) -> Any:
                 lambda t: t.name("directory").relation([_.InDiagrams]).me("diagram"),
                 lambda t: t.name("shapes").relation([_.InDiagram]).me("diagram"),
             ]),
-            role("Logical.InDiagram", "diagram", "shape", uniques=[["diagram"]]),  # every shape, a member of one diagram
+            role("Logical.InDiagram", "diagram", "shape", uniques=[["diagram"]]),  # every shape, of one diagram
             lambda _: _.OfShape.name("Logical.OfShape").ref(True).adjacencies([
                 lambda t: owned(t, _),
                 lambda t: owns(t, _),

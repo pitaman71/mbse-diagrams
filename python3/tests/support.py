@@ -301,8 +301,9 @@ class Bench:
         differ = []
         for i, (kind, args, entry, adjusted, placed) in enumerate(self.journal):
             tx = Plain.FromPlain(again.store).Transaction(JSON.loads(entry))
-            if again._apply(kind, args, tx) != adjusted or (placed != again.placed and (not placed or not again.placed or
-                                                                                         _unmatched(placed, again.placed))):
+            same = again._apply(kind, args, tx) == adjusted
+            moved = placed != again.placed and (not placed or not again.placed or _unmatched(placed, again.placed))
+            if not same or moved:
                 differ.append(i)
         return differ
 

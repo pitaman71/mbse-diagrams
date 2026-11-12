@@ -82,7 +82,7 @@ interface Element {
 /** `x`'s unit length: the diagram's, or a shape's, its container's times the scaling factor. */
 export function unit_length(x: any): number {
   if (isDiagram(x)) return tuning(x).unit;
-  return unit_length(containerOf(x)) * tuning(diagramOf(x)).scaling;
+  return unit_length(Logical.container_of(x)) * tuning(diagramOf(x)).scaling;
 }
 
 /** One diagram's physical layout, followed one mutation at a time. */
@@ -163,13 +163,13 @@ export class Layout {
     let at = x;
     while (!isDiagram(at) && !isShape(at)) at = Logical.owner_of(at); // a point, vector, segment, spec, grid or cell
     this.dirty.add(this.element(at));
-    if (isShape(at)) this.dirty.add(this.element(containerOf(at))); // where it is held
+    if (isShape(at)) this.dirty.add(this.element(Logical.container_of(at))); // where it is held
   }
 
   private element(x: any): Element {
     let e = this.elements.get(x);
     if (e === undefined) {
-      const depth = isDiagram(x) ? 0 : (this.element(containerOf(x)).depth + 1);
+      const depth = isDiagram(x) ? 0 : (this.element(Logical.container_of(x)).depth + 1);
       e = { x, key: `e${this.made++}.${Logical.name_of(x)}`, depth, unit: unit_length(x), turn: 0,
         constraints: new Map(), annotations: new Map(), children: new Set() };
       this.elements.set(x, e);
@@ -422,10 +422,6 @@ function gridOf(container: any): any {
   return Logical.grid_of(container);
 }
 
-/** The container a shape is in; the diagram's top level for one no grid holds. */
-function containerOf(shape: any): any {
-  return [Logical.container_of(shape), diagramOf(shape)].find((x) => x !== null);
-}
 
 /** A grid's cells, each with its row, column and shapes, in order. */
 function cellsOf(grid: any): { cell: any; row: number; column: number; shapes: any[] }[] {

@@ -4,9 +4,9 @@
  *
  * A shape is named by its handle, the path it was made at: `cpu` a top-level shape, `cpu.a` the child `a` of `cpu`.
  * Every shape is owned by the diagram, by its handle, which is unique in it, and is a member of it, contained or not;
- * it is contained by the grid its container owns, the diagram's for a top-level shape, a relation alone, so that a
- * shape moved keeps its handle. A step that makes a shape writes its roles, membership and containment, and the grid
- * that holds it where its container has none; a step that lays out or turns a container writes its grid's settings,
+ * a child is contained by the grid its container owns, a relation alone, so that a shape moved keeps its handle, and a
+ * top-level shape by none: the diagram's grid holds it. A step that makes a shape writes its roles, membership and
+ * containment, and the grid that holds it where its container, or the diagram, has none; a step that lays out or turns a container writes its grid's settings,
  * making the grid where it has none; every other step finds a shape by its handle alone. Names are shown without their
  * container's part: `a`, for `cpu.a`. Each step runs its mutation, then, in a transaction of its own, the `Container`
  * function that follows it, and gives back the adjustments it made, as JSON text, each shape by its name; or the error
@@ -118,8 +118,8 @@ export class Bench {
       (x: any) => x.remove((e: any) => e.name(n)))));
   }
 
-  /** The children `names` removed from `box`, in one mutation: each leaves its container's grid for the diagram's,
-   * deleting nothing, with its adjacency specs, from and to it. */
+  /** The children `names` removed from `box`, in one mutation: each leaves its container's grid, for the diagram's
+   * top level, deleting nothing, with its adjacency specs, from and to it. */
   unchild(box: string, ...names: string[]): string {
     return this.relocate("unchild", [box, ...names], names.map((n) => path(box, n)), box, "");
   }
@@ -138,8 +138,8 @@ export class Bench {
     const specs: Spec[] = [];
     for (const handle of handles) {
       const s = symbol(handle);
-      specs.push((_: any) => _[grid_symbol(here)].children((x: any) => x.remove((e: any) => e.child(_[s]))));
-      specs.push((_: any) => _[grid_symbol(to)].children([_[s]]));
+      if (here) specs.push((_: any) => _[grid_symbol(here)].children((x: any) => x.remove((e: any) => e.child(_[s]))));
+      if (to) specs.push((_: any) => _[grid_symbol(to)].children([_[s]]));
       const shape = this.shape(handle);
       for (const e of shape.adjacent_to) { // its own specs
         const n = Logical.name_of(e.adjacency) as string;
@@ -233,8 +233,8 @@ export class Bench {
   // --- running a step ---
 
   /** The mutation that finds the shapes `paths` and `made` by their handles, each owned by the diagram, making those
-   * it does not find, writes the roles of those `made`, a member of the diagram and held by its container's grid, finds
-   * the grids of the containers `grids`, `""` for the diagram's, making those it does not find, and writes `specs` over
+   * it does not find, writes the roles of those `made`, a member of the diagram and, in a container, held by its grid,
+   * finds the grids of the containers `grids`, `""` for the diagram's, making those it does not find, and writes `specs` over
    * them. */
   expression(paths: string[], spec: boolean | Record<string, any>, ...specs: Spec[]): any {
     return this.expressing(paths, [], spec, specs, []);
@@ -261,11 +261,11 @@ export class Bench {
       found.push((_: any) => _[symbol(box)].owns({ grid: (e: any) => e.owned(_[grid_symbol(box)]) }));
     };
     for (const handle of [...paths, ...made]) find(handle);
-    for (const handle of made) { // a member of the diagram, and held by its container's grid
+    for (const handle of made) { // a member of the diagram, and, in a container, held by its grid
       found.push((_: any) => _[d].shapes([_[symbol(handle)]]));
       const up = handle.includes(".") ? handle.slice(0, handle.lastIndexOf(".")) : "";
-      grid(up);
-      found.push((_: any) => _[grid_symbol(up)].children([_[symbol(handle)]]));
+      grid(up); // the diagram's holds a top-level shape with no entry
+      if (up) found.push((_: any) => _[grid_symbol(up)].children([_[symbol(handle)]]));
     }
     for (const box of grids) grid(box);
     // after their owners', so that the upsert finds each by its owner and name, never by ranging over all

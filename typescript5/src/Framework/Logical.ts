@@ -15,7 +15,8 @@
  * - a container, a shape or the diagram, owns at most one grid, a `Logical.OfGrid`, as `grid`, which holds its
  *   children, each in one grid (`Logical.Containment`), in the order it was added: containment is a path through
  *   ownership, so that a child can be contained only by a grid, and a container has only one. The diagram's grid holds
- *   its top-level shapes; a shape no grid holds is in no container at all. Moving a shape from one grid to another
+ *   every member of the diagram that no shape's grid holds, its top-level shapes, with no entry of its own: removing a
+ *   shape's containment entry moves it to the top level, deleting nothing. Moving a shape into or out of a container
  *   changes this entry alone, so that the shape keeps its identity and what it owns. A grid's settings are its own
  *   properties: `span`, the cells it holds along the axis it does not grow along, a positive int; `grows`, that axis,
  *   `"rows"` or `"columns"`; and `cell_rotation`, a `Logical.OfRotation`, its cells' turn from its container's compass.
@@ -154,7 +155,8 @@ export function owner_of(x: any): any {
   for (const adjacency of x.as_schema().adjacencies.values()) {
     if (adjacency.owner) {
       const [link] = [...adjacency.relation.entry.links.keys()].filter((k: string) => k !== adjacency.me);
-      return [...[...x[adjacency.name]].map((entry: any) => entry[link]), null][0]; // the first, or null
+      for (const entry of x[adjacency.name]) return entry[link];
+      return null;
     }
   }
   return null;
@@ -162,8 +164,10 @@ export function owner_of(x: any): any {
 
 /** `x`'s name among its owner's, where `Logical.Owns` owns it. */
 export function name_of(x: any): string | null {
-  if (!x.as_schema().adjacencies.has("owner")) return null;
-  return [...[...x.owner].map((entry: any) => entry.name.get()), null][0]; // the first, or null
+  if (x.as_schema().adjacencies.has("owner")) {
+    for (const entry of x.owner) return entry.name.get();
+  }
+  return null;
 }
 
 /** The grid a container, a shape or the diagram, owns, or `null`. */
@@ -172,9 +176,19 @@ export function grid_of(container: any): any {
   return null;
 }
 
-/** The container a shape is in: the shape or the diagram whose grid holds it, or `null` where no grid does. */
+/** The container a shape is in: the shape whose grid holds it, or the diagram, for a top-level shape; `null` for a
+ * shape that is no diagram's member. */
 export function container_of(shape: any): any {
   for (const entry of shape.container) return owner_of(entry.grid);
+  for (const entry of shape.diagram) return entry.diagram;
+  return null;
+}
+
+/** The grid that holds a shape: its container's, or the diagram's, for a top-level shape; `null` where that diagram
+ * has no grid yet, or the shape is no diagram's member. */
+export function holding(shape: any): any {
+  for (const entry of shape.container) return entry.grid;
+  for (const entry of shape.diagram) return grid_of(entry.diagram);
   return null;
 }
 
@@ -225,10 +239,11 @@ export function compass(x: any): number {
 function enclosing(shape: any): number {
   let turn = 0;
   for (;;) {
-    const grids = [...shape.container].map((e: any) => e.grid);
-    if (grids.length === 0) return ((turn % 360) + 360) % 360;
-    turn += grids[0].cell_rotation.degrees.get() ?? 0;
-    shape = owner_of(grids[0]);
+    const grid = holding(shape);
+    if (grid === null) return ((turn % 360) + 360) % 360;
+    turn += grid.cell_rotation.degrees.get() ?? 0;
+    shape = owner_of(grid);
+    if (shape.as_schema().name === "Logical.OfDiagram") return ((turn % 360) + 360) % 360;
   }
 }
 

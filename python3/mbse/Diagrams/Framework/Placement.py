@@ -44,7 +44,7 @@ from typing import Any, Callable
 
 from mbse.Schemas.Framework import Proxies
 
-from . import Container, Logical, Physical
+from . import Logical, Physical
 from .Constraints import Constraint, ConstraintSet, Engine, Op, signature
 from .Kiwi import KiwiEngine
 
@@ -85,7 +85,7 @@ def unit_length(x: Any) -> float:
     """`x`'s unit length: the diagram's, or a shape's, its container's times the scaling factor."""
     if _is_diagram(x):
         return _tuning(x)["unit"]
-    return unit_length(Container.container_of(x)) * _tuning(_diagram_of(x))["scaling"]
+    return unit_length(_container_of(x)) * _tuning(_diagram_of(x))["scaling"]
 
 
 class Layout:
@@ -164,12 +164,12 @@ class Layout:
             at = Logical.owner_of(at)
         self._dirty[self._element(at)] = None
         if _is_shape(at):
-            self._dirty[self._element(Container.container_of(at))] = None  # where it is held
+            self._dirty[self._element(_container_of(at))] = None  # where it is held
 
     def _element(self, x: Any) -> _Element:
         e = self._elements.get(x)
         if e is None:
-            depth = 0 if _is_diagram(x) else self._element(Container.container_of(x)).depth + 1
+            depth = 0 if _is_diagram(x) else self._element(_container_of(x)).depth + 1
             e = _Element(x, f"e{self._made}.{Logical.name_of(x)}", depth, unit_length(x))
             self._made += 1
             self._elements[x] = e
@@ -265,7 +265,7 @@ class Layout:
             return
         t = _tuning(_diagram_of(e.x))
         m = t["margin"]
-        unit, turn = e.unit * t["scaling"], e.turn + grid.cell_rotation.degrees.get()
+        unit, turn = e.unit * t["scaling"], e.turn + (grid.cell_rotation.degrees.get() or 0.0)
 
         def at() -> Pair:
             return (0.0, 0.0) if diagram else (value("L"), value("T"))
@@ -282,8 +282,8 @@ class Layout:
         if not cells:
             add("grid.width", _c("==", 0, (1, v("gW"))))
             add("grid.height", _c("==", 0, (1, v("gH"))))
-        for axis, count, start, size, pos, length in (("column", grid.columns.get(), "gL", "gW", "X", "W"),
-                                                      ("row", grid.rows.get(), "gT", "gH", "Y", "H")):
+        for axis, count, start, size, pos, length in (("column", grid.columns.get() or 0, "gL", "gW", "X", "W"),
+                                                      ("row", grid.rows.get() or 0, "gT", "gH", "Y", "H")):
             for k in range(count):
                 before = [(-1, v(start))] if k == 0 else [(-1, v(f"{axis}{k - 1}.{pos}")),
                                                           (-1, v(f"{axis}{k - 1}.{length}"))]
@@ -292,7 +292,7 @@ class Layout:
             if count > 0:
                 add(f"{axis}s.end", _c("==", -m, (1, v(start)), (1, v(size)), (-1, v(f"{axis}{count - 1}.{pos}")),
                                        (-1, v(f"{axis}{count - 1}.{length}"))))
-        rows = grid.grows.get() == "rows"
+        rows = Logical.settings(grid)[1] == "rows"
         for cell, row, column, shapes in cells:
             cx, cy, cw, ch = f"column{column}.X", f"row{row}.Y", f"column{column}.W", f"row{row}.H"
             annotations[cell] = _Annotation(cell, "frame", "cell", lambda cx=cx, cy=cy, cw=cw, ch=ch: [
@@ -357,12 +357,16 @@ def _mutation(diagram: Any, changed: list[tuple[_Annotation, list[float]]]) -> A
             return "directory"
         s = named.get(x)
         if s is None:
-            owner = name(Logical.owner_of(x))  # owners first, so that the upsert finds each by its owner and name
+            owner = name(Logical.owner_of(x))  # owners first, so that the upsert finds each by its owner and key
             s = named[x] = f"o{len(named)}"
             module, schema = kind.split(".")
             symbols[s] = getattr(getattr(store, module), schema)
-            specs.append(lambda _, owner=owner, key=Logical.name_of(x), s=s: getattr(_, owner).owns(
-                {key: lambda e: e.owned(getattr(_, s))}))
+            if kind == "Container.OfCell":  # its grid's, by its row and column
+                specs.append(lambda _, owner=owner, s=s, r=x.row.get(), c=x.column.get(): getattr(_, owner).cells(
+                    lambda a: a.insert(lambda e: e.cell(getattr(_, s)).row(r).column(c))))
+            else:
+                specs.append(lambda _, owner=owner, key=Logical.name_of(x), s=s: getattr(_, owner).owns(
+                    {key: lambda e: e.owned(getattr(_, s))}))
         return s
 
     for i, (a, values) in enumerate(changed):
@@ -427,9 +431,13 @@ def _tuning(diagram: Any) -> dict[str, float]:
 
 
 def _grid_of(container: Any) -> Any:
-    for e in container.grid:
-        return e.grid
-    return None
+    return Logical.grid_of(container)
+
+
+def _container_of(shape: Any) -> Any:
+    """The container a shape is in; the diagram's top level for one no grid holds."""
+    container = Logical.container_of(shape)
+    return _diagram_of(shape) if container is None else container
 
 
 def _cells_of(grid: Any) -> list[tuple[Any, int, int, list[Any]]]:

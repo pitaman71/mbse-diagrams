@@ -157,8 +157,7 @@ const quarter = (d) => ["north", "east", "south", "west"][Math.floor(((((d % 360
 function adjustmentText(a) {
   if (!a) return '<span class="empty">none: the container layout does not follow this mutation</span>';
   switch (a.kind) {
-    case "grid": return `grid made: ${a.span} wide, growing ${a.grows}, its cells turned ${a.cell_rotation}°`;
-    case "rotate": return `cells turned to ${a.degrees}°`;
+    case "grid": return `${esc(a.container)}'s grid takes its settings: ${a.span} wide, growing ${a.grows}, its cells turned ${a.cell_rotation}°`;
     case "place": return `place <b>${esc(a.shape)}</b> in ${pos(a.to)}, its order ${a.order}`;
     case "move": return `move <b>${esc(a.shape)}</b> ${pos(a.from)} → ${pos(a.to)}`;
     case "leave": return `<b>${esc(a.shape)}</b> leaves ${pos(a.from)}`;
@@ -170,8 +169,7 @@ function adjustmentText(a) {
 
 function chipText(a) {
   switch (a.kind) {
-    case "grid": return "grid made";
-    case "rotate": return `turn ${a.degrees}°`;
+    case "grid": return `grid ${a.span} ${a.grows}, ${a.cell_rotation}°`;
     case "place": return `place ${a.shape} ${pos(a.to)}`;
     case "move": return `move ${a.shape} ${pos(a.to)}`;
     case "leave": return `${a.shape} leaves`;
@@ -207,8 +205,7 @@ function timelineView() {
 function effectText(a, state) {
   if (!a) return '<span class="empty">the layout is unchanged</span>';
   switch (a.kind) {
-    case "grid": return "an empty grid appears";
-    case "rotate": return `the grid's cells, and the shapes in them, turn to ${a.degrees}° from the container's compass`;
+    case "grid": return `the grid is ${a.span} wide, growing ${a.grows}, its cells, and the shapes in them, turned ${a.cell_rotation}° from the container's compass`;
     case "place": return `${esc(a.shape)} appears at ${pos(a.to)}`;
     case "move": {
       const shared = state && (state.cells[cellKey(a.to)] || []).length > 1;
@@ -258,7 +255,7 @@ function touched(a) {
   for (const p of [a.from, a.to]) if (p) cells.add(cellKey(p));
   if (a.shape && a.kind !== "grid") shapes.add(a.shape);
   return { cells, shapes, rule: a.kind === "rule" ? [a.from_shape, a.to_shape, a.degrees] : null,
-           grid: ["grid", "extents", "rotate"].includes(a.kind) };
+           grid: ["grid", "extents"].includes(a.kind) };
 }
 
 function modelView(state, a) {

@@ -65,7 +65,7 @@ RECORDER = Recorder()
 
 def where(bench: Any, handle: str) -> str:
     """The handle of the container the shape `handle` is in, or `""` for the diagram's top level."""
-    container = Container.container_of(bench.shape(handle))
+    container = Logical.container_of(bench.shape(handle))
     return "" if container.as_schema().name == "Logical.OfDiagram" else Logical.name_of(container)
 PLACE = {"force": False}  # whether the notebook running builds benches the tool should place
 
@@ -93,8 +93,8 @@ def physical_model(bench: Any) -> list[dict[str, Any]] | None:
                         items.append({"key": f"{key}:{support.name_of(e.point)}", "kind": "point", "role": member,
                                       "label": support.name_of(e.point), "at": [p.absolute.x.get(), p.absolute.y.get()],
                                       "direction": p.direction.get()})
-        for e in x.grid:
-            grid = e.grid
+        grid = Logical.grid_of(x)
+        if grid is not None:
             framed(grid, f"{key}/grid", "grid", "grid")
             for k in grid.cells:
                 cell = f"{key}/grid/{k.cell.row.get()},{k.cell.column.get()}"
@@ -122,7 +122,8 @@ def data_model(bench: Any, box: str) -> dict[str, Any] | None:
         return None
     if shape is None:
         return None
-    kids = [e.child for e in shape.children] if box else [e.shape for e in shape.shapes if not list(e.shape.container)]
+    grid = Logical.grid_of(shape)
+    kids = [] if grid is None else [e.child for e in grid.children]
     children = [{
         "name": support.name_of(child),
         "specs": [{"to": support.name_of([x.shape for x in e.adjacency.to_shape][0]),
@@ -133,17 +134,19 @@ def data_model(bench: Any, box: str) -> dict[str, Any] | None:
 
 
 def container_model(bench: Any, box: str) -> dict[str, Any] | None:
-    """The container model of the container at `box`: its grid, its cells and their shapes, and its rules."""
+    """The container model of the container at `box`: its grid, its cells and their shapes, and its rules; None until
+    the container layout has taken its grid's settings."""
     try:
-        entries = list(bench.shape(box).grid)
+        grid = Logical.grid_of(bench.shape(box))
     except Exception:
         return None
-    if not entries:
+    if grid is None or grid.inserted.get() is None:
         return None
-    grid = entries[0].grid
+    span, grows = Logical.settings(grid)
     return {
-        "grows": grid.grows.get(), "span": grid.span.get(), "rows": grid.rows.get(), "columns": grid.columns.get(),
-        "inserted": grid.inserted.get(), "cell_rotation": grid.cell_rotation.degrees.get(),
+        "container": support.name_of(Logical.owner_of(grid)), "grows": grows, "span": span, "rows": grid.rows.get(),
+        "columns": grid.columns.get(),
+        "inserted": grid.inserted.get(), "cell_rotation": grid.cell_rotation.degrees.get() or 0.0,
         "cells": {f"{e.cell.row.get()},{e.cell.column.get()}": [[support.name_of(h.shape), h.order.get()]
                                                                  for h in e.cell.children] for e in grid.cells},
         "rules": [rule(e.rule) for e in grid.rules],
@@ -160,16 +163,16 @@ def rule(of: Any) -> list[Any]:
 def play(state: dict[str, Any] | None, adjustment: dict[str, Any]) -> dict[str, Any] | None:
     """The container model after one adjustment."""
     kind = adjustment["kind"]
-    if kind == "grid":
-        made = {"grows": adjustment["grows"], "span": adjustment["span"], "rows": 0, "columns": 0, "inserted": 0,
-                "cell_rotation": adjustment["cell_rotation"], "cells": {}, "rules": []}
-        return made if state is None or adjustment["container"] == state.get("container") else {**made, "other": True}
+    settings = {k: adjustment[k] for k in ("grows", "span", "cell_rotation")} if kind == "grid" else {}
+    if kind == "grid" and state is None:  # taken by a new grid
+        return {"container": adjustment["container"], **settings, "rows": 0, "columns": 0, "inserted": 0, "cells": {},
+                "rules": []}
     state = copy.deepcopy(state)
     assert state is not None
     cells = state["cells"]
     key = lambda pair: f"{pair[0]},{pair[1]}"  # noqa: E731
-    if kind == "rotate":
-        state["cell_rotation"] = adjustment["degrees"]
+    if kind == "grid":  # taken by a grid with cells, which the moves after it rearrange
+        state.update(settings)
     elif kind == "place":
         cells.setdefault(key(adjustment["to"]), []).append([adjustment["shape"], adjustment["order"]])
         state["inserted"] = max(state["inserted"], adjustment["order"] + 1)
@@ -200,7 +203,7 @@ def describe(kind: str, args: tuple[Any, ...]) -> str:
     box = args[0] if args else ""
     if kind == "layout":
         box, span, grows, turn = args
-        return f"lay {box or 'the diagram'} out in a grid {span} wide, growing {grows}" + (
+        return f"give {box or 'the diagram'}'s grid a span of {span}, growing {grows}" + (
             f", its cells turned {turn:g}°" if turn else "")
     if kind == "child":
         return f"add child {args[1]} to {box or 'the diagram'}"
@@ -213,7 +216,9 @@ def describe(kind: str, args: tuple[Any, ...]) -> str:
     if kind == "move":
         return f"move {args[0]} into " + (args[1] or "the diagram's top level")
     if kind == "turn":
-        return f"turn {box}'s cells to {args[1]:g}°"
+        return f"turn {box or 'the diagram'}'s cells to {args[1]:g}°"
+    if kind == "defaults":
+        return f"give the diagram's grids a default span of {args[0]}, growing {args[1]}"
     if kind == "points":
         names = ", ".join(str(e[0]) for e in args[1])
         return f"give {box} its origin" + (f" and points {names}, each by a vector from it" if names else " and points")
@@ -225,15 +230,16 @@ def wrap() -> None:
 
     @functools.wraps(original)
     def recorded(self: Any, kind: str, args: tuple[Any, ...], paths: list[str], *specs: Any, spec: Any = False,
-                 made: list[str] | None = None) -> str:
+                 made: list[str] | None = None, grids: list[str] | None = None) -> str:
         if not hasattr(self, "_recording"):
-            return original(self, kind, args, paths, *specs, spec=spec, made=made)
-        box = args[0] if kind != "logical" and args else (paths[0].split(".")[0] if paths else "")
+            return original(self, kind, args, paths, *specs, spec=spec, made=made, grids=grids)
+        box = "" if kind == "defaults" else (
+            args[0] if kind != "logical" and args else (paths[0].split(".")[0] if paths else ""))
         if kind == "move" or (kind in ("spec", "unspec") and not box and paths):
             box = where(self, args[0] if kind == "move" else paths[0])  # the container it is in, before
         data_before, model_before = data_model(self, box), container_model(self, box)
         physical_before = physical_model(self)
-        adjusted = original(self, kind, args, paths, *specs, spec=spec, made=made)
+        adjusted = original(self, kind, args, paths, *specs, spec=spec, made=made, grids=grids)
         data_after, model_after = data_model(self, box), container_model(self, box)
         physical_after = physical_model(self)
         mutation = json.loads(self.journal[-1][2])
@@ -243,8 +249,9 @@ def wrap() -> None:
         moved = ({support.name_of(self.shape(support.Bench._path(args[0], n))) for n in args[1:]} if kind == "unchild"
                  else {support.name_of(self.shape(args[0]))} if kind == "move" else set())
         for adjustment in adjustments:
-            if adjustment["kind"] == "place" and adjustment["shape"] in moved:
-                moved = set()  # where it went: another container's adjustments, after this one's
+            other = adjustment["kind"] == "grid" and state is not None and adjustment["container"] != state["container"]
+            if (adjustment["kind"] == "place" and adjustment["shape"] in moved) or other:
+                moved = set()  # where it went, or another grid's settings: another container's adjustments, after
                 state = model_after
             elif not moved or adjustment["kind"] != "place":
                 state = play(state, adjustment) if state is not model_after else state

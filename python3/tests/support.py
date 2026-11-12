@@ -2,9 +2,11 @@
 container layout follows, each a transaction expression, journalled, then given to `Container`.
 
 A shape is named by its handle, the path it was made at: `cpu` a top-level shape, `cpu.a` the child `a` of `cpu`. Every
-shape is owned by the diagram, by its handle, which is unique in it, and is a member of it, contained or not; its
-container is a relation alone, so that a shape moved keeps its handle. A step that makes a shape writes its roles,
-membership and containment; every other step finds a shape by its handle alone. Names are shown without their
+shape is owned by the diagram, by its handle, which is unique in it, and is a member of it, contained or not; it is
+contained by the grid its container owns, the diagram's for a top-level shape, a relation alone, so that a shape moved
+keeps its handle. A step that makes a shape writes its roles, membership and containment, and the grid that holds it
+where its container has none; a step that lays out or turns a container writes its grid's settings, making the grid
+where it has none; every other step finds a shape by its handle alone. Names are shown without their
 container's part: `a`, for `cpu.a`. Each step runs its mutation, then, in a transaction of its own, the `Container`
 function that follows it, and gives back the adjustments it made, as JSON text, each shape by its name; or the error the
 function raised, as text. A move, out of a container or into one, is anticipated: `Container.removing` runs first, then
@@ -28,14 +30,21 @@ def symbol(path: str) -> str:
     return "s_" + path.replace(".", "__")
 
 
+def grid_symbol(path: str) -> str:
+    """The symbol a step's expression binds the grid of the container at `path` to: `g_` for the diagram's."""
+    return "g_" + path.replace(".", "__")
+
+
 def name_of(x: Any) -> str:
     """A shape's name, the last part of its handle; the diagram's, for the diagram; and a grid's or a cell's, its
-    owners' names too, `cpu/grid/0,1`, since every grid is a `grid` and cells of different grids share names."""
-    name = Logical.name_of(x) or "?"
+    owners' names too, `cpu/grid/0,1`, since every grid is a `grid` and cells of different grids share coordinates."""
     kind = x.as_schema().name
+    if kind == "Container.OfCell":
+        return f"{name_of(Logical.owner_of(x))}/{x.row.get()},{x.column.get()}"
+    name = Logical.name_of(x) or "?"
     if kind == "Logical.OfShape":
         return name.rsplit(".", 1)[-1]
-    if kind not in ("Container.OfGrid", "Container.OfCell"):
+    if kind != "Logical.OfGrid":
         return name
     return f"{name_of(Logical.owner_of(x))}/{name}"
 
@@ -67,7 +76,13 @@ def written(store: Any, tx: Any) -> str:
     for spec in pattern["spec"]:
         for symbol, mutations in spec.items():
             for m in mutations:
-                if m.get("as_adjacency", {}).get("name") == "owns":
+                if m.get("as_adjacency", {}).get("name") == "cells":  # a cell, by its row and column
+                    for entry in m["as_adjacency"]["mutations"][0]["insert"]["entries"]:
+                        link = next(x for x in entry["mutations"] if "as_link" in x)["as_link"]
+                        at = {x["as_property"]["name"]: x["as_property"]["mutations"][0]["set"]["value"]
+                              for x in entry["mutations"] if "as_property" in x}
+                        owner[link["mutations"][0]["set"]["ref"]["symbol"]] = (symbol, f"{at['row']},{at['column']}")
+                elif m.get("as_adjacency", {}).get("name") == "owns":
                     for entry in m["as_adjacency"]["mutations"][0]["insert"]["entries"]:
                         link = next(x for x in entry["mutations"] if "as_link" in x)["as_link"]
                         prop = next(x for x in entry["mutations"] if "as_property" in x)["as_property"]
@@ -82,7 +97,7 @@ def written(store: Any, tx: Any) -> str:
         kind = schema(symbol)
         if kind == "Logical.OfShape":
             return key.rsplit(".", 1)[-1]
-        return f"{name(up)}/{key}" if kind in ("Container.OfGrid", "Container.OfCell") else key
+        return f"{name(up)}/{key}" if kind in ("Logical.OfGrid", "Container.OfCell") else key
 
     rows = []
     for w, v in values.items():
@@ -159,9 +174,12 @@ class Bench:
 
     # --- the steps: each a mutation, and the container layout's adjustments to it ---
 
-    def layout(self, box: str, span: int, grows: str = "rows", cell_rotation: float = 0.0) -> str:
-        """`box` given a grid before its children: a change of the container layout alone."""
-        return self._step("layout", (box, span, grows, cell_rotation), [box] if box else [])
+    def layout(self, box: str, span: Any, grows: str = "rows", cell_rotation: float = 0.0) -> str:
+        """`box`'s grid given its settings, made where it has none."""
+        g = grid_symbol(box)
+        return self._step("layout", (box, span, grows, cell_rotation), [box] if box else [],
+                          lambda _: getattr(_, g).span(span).grows(grows).cell_rotation(
+                              lambda r: r.degrees(float(cell_rotation))), grids=[box])
 
     def child(self, box: str, name: str) -> str:
         """A child `name` made in `box`, a shape, or at the diagram's top level where `box` is `""`."""
@@ -188,14 +206,14 @@ class Bench:
             lambda x: x.remove(lambda e: e.name(n))) for n in names])
 
     def unchild(self, box: str, *names: str) -> str:
-        """The children `names` removed from `box`, in one mutation: each leaves its container for the diagram's top
-        level, deleting nothing, with its adjacency specs, from and to it."""
+        """The children `names` removed from `box`, in one mutation: each leaves its container's grid for the
+        diagram's, deleting nothing, with its adjacency specs, from and to it."""
         return self._relocate("unchild", (box, *names), [self._path(box, n) for n in names], box, "")
 
     def move(self, handle: str, to: str) -> str:
         """The shape `handle` moved, in one mutation, from its container, or the diagram's top level, into `to`, a
         shape, keeping its handle and what it owns, with its adjacency specs, from and to it, removed."""
-        container = Container.container_of(self.shape(handle))
+        container = Logical.container_of(self.shape(handle))
         here = "" if container.as_schema().name == "Logical.OfDiagram" else Logical.name_of(container)
         return self._relocate("move", (handle, to), [handle], here, to)
 
@@ -204,11 +222,9 @@ class Bench:
         paths, specs = [p for p in (here, to) if p] + list(handles), []
         for handle in handles:
             shape, s = self.shape(handle), symbol(handle)
-            if here:
-                specs.append(lambda _, s=s: getattr(_, symbol(here)).children(
-                    lambda x: x.remove(lambda e: e.child(getattr(_, s)))))
-            if to:
-                specs.append(lambda _, s=s: getattr(_, symbol(to)).children([getattr(_, s)]))
+            specs.append(lambda _, s=s: getattr(_, grid_symbol(here)).children(
+                lambda x: x.remove(lambda e: e.child(getattr(_, s)))))
+            specs.append(lambda _, s=s: getattr(_, grid_symbol(to)).children([getattr(_, s)]))
             for e in shape.adjacent_to:  # its own specs
                 specs.append(lambda _, s=s, n=Logical.name_of(e.adjacency): getattr(_, s).owns(
                     lambda x: x.remove(lambda e: e.name(n))))
@@ -218,11 +234,18 @@ class Bench:
                     paths.append(Logical.name_of(owner))
                     specs.append(lambda _, o=symbol(Logical.name_of(owner)), n=Logical.name_of(e.adjacency): getattr(
                         _, o).owns(lambda x: x.remove(lambda e: e.name(n))))
-        return self._step(kind, args, paths, *specs)
+        return self._step(kind, args, paths, *specs, grids=[here, to])
 
     def turn(self, box: str, degrees: float) -> str:
-        """`box`'s cells turned by `degrees`: a change of the container layout alone."""
-        return self._step("turn", (box, degrees), [box])
+        """`box`'s grid's cells turned by `degrees`, the grid made where it has none."""
+        g = grid_symbol(box)
+        return self._step("turn", (box, degrees), [box] if box else [],
+                          lambda _: getattr(_, g).cell_rotation(lambda r: r.degrees(float(degrees))), grids=[box])
+
+    def defaults(self, span: Any, grows: Any) -> str:
+        """The diagram's `grid_span` and `grid_grows`, the settings of each grid that sets none."""
+        d = symbol("")
+        return self._step("defaults", (span, grows), [], lambda _: getattr(_, d).grid_span(span).grid_grows(grows))
 
     def logical(self, paths: list[str], *specs: Any) -> str:
         """A mutation of the logical layout alone, which the container layout does not follow: the shapes `paths`,
@@ -269,17 +292,16 @@ class Bench:
     def cells(self, box: str) -> str:
         """Each cell of `box`'s grid, in row and column order: its row and column, the names of the children it holds,
         in order, each with its order, and its axis and extents."""
-        (entry,) = self.shape(box).grid
+        grid = Logical.grid_of(self.shape(box))
         return text([[[e.cell.row.get(), e.cell.column.get()], [[name_of(h.shape), h.order.get()]
                                                                  for h in e.cell.children],
                       e.cell.grows.get(), e.cell.rows.get(), e.cell.columns.get()]
-                     for e in sorted(entry.grid.cells, key=lambda e: (e.cell.row.get(), e.cell.column.get()))])
+                     for e in sorted(grid.cells, key=lambda e: (e.cell.row.get(), e.cell.column.get()))])
 
     def rules(self, box: str) -> str:
         """`box`'s grid's rules, in the order they reached it: each one's shapes, degrees and whether it is ignored."""
-        (entry,) = self.shape(box).grid
         found = []
-        for e in entry.grid.rules:
+        for e in Logical.grid_of(self.shape(box)).rules:
             (spec,) = [s.adjacency for s in e.rule.spec]
             found.append([[x.shape for x in spec.from_shape][0], [x.shape for x in spec.to_shape][0],
                           spec.rotation.degrees.get(), e.rule.ignored.get()])
@@ -324,9 +346,10 @@ class Bench:
                 for member in ("origin", "borders", "extents"):
                     for e in getattr(x, member):
                         rows.extend(_placement_rows(e.point))
-            for e in x.grid:
-                rows.extend(_frame_row(e.grid, f.frame) for f in e.grid.frame)
-                for k in e.grid.cells:
+            grid = Logical.grid_of(x)
+            if grid is not None:
+                rows.extend(_frame_row(grid, f.frame) for f in grid.frame)
+                for k in grid.cells:
                     rows.extend(_frame_row(k.cell, f.frame) for f in k.cell.frame)
                     for h in k.cell.children:
                         visit(h.shape)
@@ -341,29 +364,39 @@ class Bench:
         return f"{box}.{name}" if box else name
 
     def _expression(self, paths: list[str], *specs: Any, spec: bool | dict[str, Any] = False,
-                    made: list[str] | None = None) -> Any:
+                    made: list[str] | None = None, grids: list[str] | None = None) -> Any:
         """The mutation that finds the shapes `paths` and `made` by their handles, each owned by the diagram, making
-        those it does not find, writes the roles of those `made`, a member of the diagram and in its container where it
-        has one, and writes `specs` over them."""
+        those it does not find, writes the roles of those `made`, a member of the diagram and held by its container's
+        grid, finds the grids of the containers `grids`, `""` for the diagram's, making those it does not find, and
+        writes `specs` over them."""
         L = self.store.Logical
         symbols: dict[str, Any] = {"directory": L.DiagramDirectory, symbol(""): L.OfDiagram}
         d = symbol("")
         found = [lambda _: _.directory.owns({"overview": lambda e: e.owned(getattr(_, d))}),
                  lambda _: _.directory.diagrams([getattr(_, d)])]
-        for handle in [*paths, *(made or [])]:
-            if symbol(handle) not in symbols:
+
+        def shape(handle: str) -> None:
+            if handle and symbol(handle) not in symbols:
                 symbols[symbol(handle)] = L.OfShape
                 found.append(lambda _, s=symbol(handle), key=handle: getattr(_, d).owns(
                     {key: lambda e: e.owned(getattr(_, s))}))
-        for handle in made or []:  # a member of the diagram, and in its container where it has one
+
+        def grid(box: str) -> None:
+            shape(box)
+            if grid_symbol(box) not in symbols:
+                symbols[grid_symbol(box)] = L.OfGrid
+                found.append(lambda _, s=symbol(box), g=grid_symbol(box): getattr(_, s).owns(
+                    {"grid": lambda e: e.owned(getattr(_, g))}))
+
+        for handle in [*paths, *(made or [])]:
+            shape(handle)
+        for handle in made or []:  # a member of the diagram, and held by its container's grid
             found.append(lambda _, s=symbol(handle): getattr(_, d).shapes([getattr(_, s)]))
-            if "." in handle:
-                up = handle.rsplit(".", 1)[0]
-                if symbol(up) not in symbols:
-                    symbols[symbol(up)] = L.OfShape
-                    found.append(lambda _, s=symbol(up), key=up: getattr(_, d).owns(
-                        {key: lambda e: e.owned(getattr(_, s))}))
-                found.append(lambda _, s=symbol(handle), u=symbol(up): getattr(_, u).children([getattr(_, s)]))
+            up = handle.rsplit(".", 1)[0] if "." in handle else ""
+            grid(up)
+            found.append(lambda _, s=symbol(handle), g=grid_symbol(up): getattr(_, g).children([getattr(_, s)]))
+        for box in grids or []:
+            grid(box)
         # after their owners', so that the upsert finds each by its owner and name, never by ranging over all
         if spec is True:
             symbols["spec"] = L.OfAdjacency
@@ -373,8 +406,9 @@ class Bench:
             lambda p: p.symbols(symbols).spec([*found, *specs])]))]))
 
     def _step(self, kind: str, args: tuple[Any, ...], paths: list[str], *specs: Any,
-              spec: bool | dict[str, Any] = False, made: list[str] | None = None) -> str:
-        tx = self._expression(paths, *specs, spec=spec, made=made)
+              spec: bool | dict[str, Any] = False, made: list[str] | None = None,
+              grids: list[str] | None = None) -> str:
+        tx = self._expression(paths, *specs, spec=spec, made=made, grids=grids)
         adjusted = self._apply(kind, args, tx)
         self.journal.append((kind, args, JSON.dumps(Plain.ToPlain(self.store).Transaction(tx)), adjusted, self.placed))
         return adjusted
@@ -427,14 +461,14 @@ class Bench:
             return ""
         try:
             with self.store.transaction():
-                if kind == "layout":
-                    adjustments = Container.layout(frame[symbol(box)], *args[1:])
-                elif kind == "child":
+                if kind == "child":
                     adjustments = Container.added(frame[symbol(self._path(box, args[1]))])
                 elif kind == "spec":
                     adjustments = Container.adjoined(frame["spec"])
-                else:
-                    adjustments = Container.rotate(frame[symbol(box)], args[1])
+                elif kind == "defaults":
+                    adjustments = Container.defaulted(frame[symbol("")])
+                else:  # its grid's settings
+                    adjustments = Container.configured(frame[grid_symbol(box)])
         except ValueError as error:
             return f"ValueError: {error}"
         self._follow(frame)

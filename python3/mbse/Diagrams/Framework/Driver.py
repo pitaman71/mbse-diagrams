@@ -59,7 +59,8 @@ class Driver:
         """Follows a journal entry, `effect`: anticipates what it removes, applies it, and follows what it adds. Returns
         the container layout's adjustments, in order, and the placement mutation run, or None."""
         store = self._store
-        (pattern,) = json.loads(JSON.dumps(Plain.ToPlain(store).Transaction(effect)))["mutations"][0]["upsert"]["exists"]
+        plain = json.loads(JSON.dumps(Plain.ToPlain(store).Transaction(effect)))
+        (pattern,) = plain["mutations"][0]["upsert"]["exists"]
         held, schemas = {}, {}
         for name, bound in pattern["symbols"].items():
             if "reference" in bound:

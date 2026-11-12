@@ -93,7 +93,9 @@ export class Driver {
         specsNew.add(adjacency);
       } else if (relation === "Logical.Owns" && verb === "remove" && !("owned" in links)) {
         for (const e of held.get(links.owner as string).owns) {
-          if (e.name.get() === values.name && e.owned.as_schema().name === "Logical.OfAdjacency") goneSpecs.push(e.owned);
+          if (e.name.get() === values.name && e.owned.as_schema().name === "Logical.OfAdjacency") {
+            goneSpecs.push(e.owned);
+          }
         }
       }
     }
@@ -134,7 +136,9 @@ export class Driver {
       for (const diagram of new Set(diagrams)) adjustments.push(...Container.defaulted(diagram));
       for (const s of moving) {
         const shape = frame.get(s);
-        if (Logical.holding(shape) !== null && [...shape.cell].length === 0) adjustments.push(...Container.added(shape));
+        if (Logical.holding(shape) !== null && [...shape.cell].length === 0) {
+          adjustments.push(...Container.added(shape));
+        }
       }
       for (const s of specsNew) {
         const spec = frame.get(s);

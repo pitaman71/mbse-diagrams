@@ -11,9 +11,9 @@ that the page shows each adjustment's state; replayed, each step must end where 
 tool checks. Each step also records the physical layout of the whole diagram before and after it, and the frames and
 placements its placement mutation wrote; the page's third column shows either layout, toggled, and a timeline shows each
 mutation's passes: each of the container layout's adjustments, then placement, before which the physical layout is shown
-as it was. A notebook that does not itself deal in `Physical` builds its benches without placement: the tool places
-them, with a minimum shape size and a margin, so that shapes with no points can be seen, and its assertions, on the
-container layout, are unaffected. Nothing in the notebooks is copied or changed. The page is written to
+as it was. A notebook that does not itself deal in `Physical`, nor read a placement, builds its benches without
+placement: the tool places them, with a minimum shape size and a margin, so that shapes with no points can be seen,
+and its assertions, on the container layout, are unaffected. Nothing in the notebooks is copied or changed. The page is written to
 `tools/.trace/container.html`, which `--open` opens in a browser.
 
 A tool for reading the tests, not a test: Python only, standard library only beyond the package itself.
@@ -308,7 +308,7 @@ def run(notebook: Path) -> None:
     title = next(("".join(c["source"]).splitlines()[0].lstrip("# ") for c in cells if c["cell_type"] == "markdown"
                   and "".join(c["source"]).startswith("# ")), notebook.stem)
     RECORDER.start(notebook.name, title)
-    PLACE["force"] = "Physical" not in notebook.read_text()
+    PLACE["force"] = not any(word in notebook.read_text() for word in ("Physical", ".placement("))  # one that reads it
     namespace: dict[str, Any] = {"__name__": "__main__"}
     for cell in cells:
         source = "".join(cell["source"])

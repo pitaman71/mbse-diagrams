@@ -1,19 +1,18 @@
-"""The suites' bench: a store with the layouts installed and one diagram, `overview`, and a step for each mutation the
-container layout follows, each a transaction expression, journalled, then given to `Container`.
+"""The suites' bench: two stores with the layouts installed and one diagram, `overview`, and a step for each kind of
+mutation, each a transaction expression run in the source store; its effect, a journal entry, is journalled and
+followed by a `Driver` in the layout store, which the suites read.
 
 A shape is named by its handle, the path it was made at: `cpu` a top-level shape, `cpu.a` the child `a` of `cpu`. Every
 shape is owned by the diagram, by its handle, which is unique in it, and is a member of it, contained or not; a child is
 contained by the grid its container owns, a relation alone, so that a shape moved keeps its handle, and a top-level
 shape by none: the diagram's grid holds it. A step that makes a shape writes its roles, membership and containment, and
-the grid that holds it where its container, or the diagram, has none; a step that lays out or turns a container writes its grid's settings, making the grid
-where it has none; every other step finds a shape by its handle alone. Names are shown without their
-container's part: `a`, for `cpu.a`. Each step runs its mutation, then, in a transaction of its own, the `Container`
-function that follows it, and gives back the adjustments it made, as JSON text, each shape by its name; or the error the
-function raised, as text. A move, out of a container or into one, is anticipated: `Container.removing` runs first, then
-`Container.added` places the shape where it went. `replay` runs the journal again, in a fresh store, and gives the steps
-whose adjustments differ, or whose placements differ by more than two millionths of a unit: none, where the layout is a
-function of its mutation sequence. A physical bench also places each step, by a `Placement.Layout`, and runs the
-mutation it writes.
+the grid that holds it where its container, or the diagram, has none; a step that lays out or turns a container writes
+its grid's settings, making the grid where it has none; every other step finds a shape by its handle alone. Names are
+shown without their container's part: `a`, for `cpu.a`. Each step gives back the container layout's adjustments to its
+entry, as JSON text, each shape by its name; none for a step that changed nothing. `replay` has a fresh driver follow
+the journal again, in a fresh layout store, and gives the steps whose adjustments differ, or whose placements differ by
+more than two millionths of a unit: none, where the layout is a function of its journal. A physical bench's layout
+store also places each step, and `placed` is what placement wrote.
 """
 
 from __future__ import annotations
@@ -21,8 +20,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from mbse.Schemas.Framework import JSON, Builders, Plain, Validators
-from mbse.Diagrams.Framework import Container, Logical, Physical, Placement
+from mbse.Schemas.Framework import JSON, Builders, Changes, Plain, Validators
+from mbse.Diagrams.Framework import Container, Driver, Logical, Physical, Placement
 
 
 def symbol(path: str) -> str:
@@ -160,15 +159,18 @@ def spec_name(b: str, degrees: float) -> str:
 
 class Bench:
     def __init__(self, fresh: bool = True, physical: bool = False) -> None:
-        self.store = Builders.Store()
-        self.store.transaction(Logical.install)
-        self.store.transaction(Container.install)
-        self.journal: list[tuple[str, tuple[Any, ...], str, str, str]] = []
-        self.physical = physical  # whether each step is also placed, by `placement`
-        self.placed = ""  # the mutation it wrote, as text
-        self.placement: Placement.Layout | None = None
-        if physical:
-            self.store.transaction(Physical.install)
+        self.source = Builders.Store()  # where each step's mutation runs, observed
+        self.store = Builders.Store()  # the layout store, which a `Driver` keeps by the source's effects
+        installs = [Logical.install, Container.install, *([Physical.install] if physical else [])]
+        for store in (self.source, self.store):
+            for install in installs:
+                store.transaction(install)
+        self.effects: list[Any] = []
+        Changes.observe(self.source, self.effects.append)
+        self.driver = Driver.Driver(self.store)
+        self.journal: list[tuple[str, tuple[Any, ...], str | None, str, str]] = []
+        self.physical = physical  # whether the layout store places each step
+        self.placed = ""  # the mutation placement wrote, as text
         if fresh:
             self.logical([])  # the diagram, `overview`
 
@@ -266,7 +268,7 @@ class Bench:
         """The shape at `at` given an origin, and extent points each reached from it by a vector, by `(name, degrees,
         length)`: a mutation of the logical layout alone, which the physical layout follows. Returns its placement,
         as text."""
-        L, s = self.store.Logical, symbol(at)
+        L, s = self.source.Logical, symbol(at)
         symbols: dict[str, Any] = {"origin": L.OfPoint}
         specs: list[Any] = [lambda _: getattr(_, s).owns({"origin": lambda e: e.owned(_.origin)}),
                             lambda _: _.origin.origin_of([getattr(_, s)])]
@@ -318,14 +320,14 @@ class Bench:
         return [validate(self.store.Logical.OfShape, self.shape(box)) for box in boxes]
 
     def replay(self) -> list[int]:
-        """Runs the journal again, in order, in a fresh store, and gives the steps whose adjustments differ, or whose
-        placements differ by more than two millionths of a unit: Kiwi, in C++, orders some of its choices by where its
-        variables are in memory, so that its last bits may differ from one run to the next."""
+        """Has a fresh driver follow the journal again, in order, in a fresh layout store, as a viewer would, and gives
+        the steps whose adjustments differ, or whose placements differ by more than two millionths of a unit: Kiwi, in
+        C++, orders some of its choices by where its variables are in memory, so that its last bits may differ from one
+        run to the next."""
         again = Bench(False, self.physical)
         differ = []
         for i, (kind, args, entry, adjusted, placed) in enumerate(self.journal):
-            tx = Plain.FromPlain(again.store).Transaction(JSON.loads(entry))
-            same = again._apply(kind, args, tx) == adjusted
+            same = again._apply(kind, args, entry) == adjusted
             moved = placed != again.placed and (not placed or not again.placed or _unmatched(placed, again.placed))
             if not same or moved:
                 differ.append(i)
@@ -371,7 +373,7 @@ class Bench:
         those it does not find, writes the roles of those `made`, a member of the diagram and, in a container, held by
         its grid, finds the grids of the containers `grids`, `""` for the diagram's, making those it does not find, and
         writes `specs` over them."""
-        L = self.store.Logical
+        L = self.source.Logical
         symbols: dict[str, Any] = {"directory": L.DiagramDirectory, symbol(""): L.OfDiagram}
         d = symbol("")
         found = [lambda _: _.directory.owns({"overview": lambda e: e.owned(getattr(_, d))}),
@@ -405,74 +407,28 @@ class Bench:
             symbols["spec"] = L.OfAdjacency
         elif spec:
             symbols.update(spec)
-        return self.store.Mutations.OfTransaction(lambda t: t.mutations([lambda mu: mu.upsert(lambda u: u.exists([
+        return self.source.Mutations.OfTransaction(lambda t: t.mutations([lambda mu: mu.upsert(lambda u: u.exists([
             lambda p: p.symbols(symbols).spec([*found, *specs])]))]))
 
     def _step(self, kind: str, args: tuple[Any, ...], paths: list[str], *specs: Any,
               spec: bool | dict[str, Any] = False, made: list[str] | None = None,
               grids: list[str] | None = None) -> str:
-        tx = self._expression(paths, *specs, spec=spec, made=made, grids=grids)
-        adjusted = self._apply(kind, args, tx)
-        self.journal.append((kind, args, JSON.dumps(Plain.ToPlain(self.store).Transaction(tx)), adjusted, self.placed))
+        """Runs a step's mutation in the source store, and has the driver follow its effect, its journal entry, in the
+        layout store: none, where the mutation changed nothing."""
+        count = len(self.effects)
+        self.source.transaction(self._expression(paths, *specs, spec=spec, made=made, grids=grids))
+        entry = (JSON.dumps(Plain.ToPlain(self.source).Transaction(self.effects[-1])) if len(self.effects) > count
+                 else None)
+        adjusted = self._apply(kind, args, entry)
+        self.journal.append((kind, args, entry, adjusted, self.placed))
         return adjusted
 
-    def _follow(self, frame: dict[str, Any]) -> None:
-        """The physical layout follows a mutation that touched what `frame` binds, once the container layout has: the
-        mutation it returns is run, and `placed` is what it wrote."""
-        if not self.physical:
-            return
-        if self.placement is None:
-            self.placement = Placement.Layout(self.overview)
-        tx = self.placement.follow(list(frame.values()))
-        self.placed = "[]" if tx is None else written(self.store, tx)
-        if tx is not None:
-            self.store.transaction(tx)
-
-    def _apply(self, kind: str, args: tuple[Any, ...], tx: Any) -> str:
-        """Runs the mutation `tx`, then the `Container` function that follows a mutation of `kind`, in a transaction
-        of its own, or first, for a removal: its adjustments, or its error, as text."""
-        self.placed = ""
-        box = args[0] if args else ""
-        moved = ([self._path(box, n) for n in args[1:]] if kind == "unchild" else [args[0]] if kind == "move" else [])
-        if self.physical and self.placement is not None:
-            for handle in moved:  # placed again where it goes
-                self.placement.removing(self.shape(handle))
-        try:
-            if kind in ("unchild", "move", "unspec"):  # anticipated: these adjustments come before the mutation
-                with self.store.transaction():
-                    if moved:
-                        adjustments = [a for h in moved for a in Container.removing(self.shape(h))]
-                    else:
-                        adjustments = [a for e in self.shape(self._path(box, args[1])).adjacent_to
-                                       if name_of([x.shape for x in e.adjacency.to_shape][0]) == args[2]
-                                       for a in Container.unjoining(e.adjacency)]
-                named = text(adjustments)  # named while what it removes still exists
-                (after,) = self.store.transaction(tx)
-                if moved:  # each is placed where it went: its container, or the diagram's top level
-                    with self.store.transaction():
-                        adjustments += [a for h in moved for a in Container.added(self.shape(h))]
-                    named = text(adjustments)
-                self._follow(after)
-                return named
-        except ValueError as error:
-            (after,) = self.store.transaction(tx)
-            self._follow(after)
-            return f"ValueError: {error}"
-        (frame,) = self.store.transaction(tx)
-        if kind in ("logical", "points"):
-            self._follow(frame)
-            return ""
-        try:
-            with self.store.transaction():
-                if kind == "child":
-                    adjustments = Container.added(frame[symbol(self._path(box, args[1]))])
-                elif kind == "spec":
-                    adjustments = Container.adjoined(frame["spec"])
-                elif kind == "defaults":
-                    adjustments = Container.defaulted(frame[symbol("")])
-                else:  # its grid's settings
-                    adjustments = Container.configured(frame[grid_symbol(box)])
-        except ValueError as error:
-            return f"ValueError: {error}"
-        self._follow(frame)
+    def _apply(self, kind: str, args: tuple[Any, ...], entry: str | None) -> str:
+        """The driver follows a journal entry, `entry`, plain data as text, or nothing: the container layout's
+        adjustments, as text; `placed` is what placement wrote."""
+        if entry is None:
+            adjustments, tx = [], None
+        else:
+            adjustments, tx = self.driver.follow(Plain.FromPlain(self.store).Transaction(JSON.loads(entry)))
+        self.placed = "" if not self.physical else "[]" if tx is None else written(self.store, tx)
         return text(adjustments)

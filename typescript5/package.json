@@ -1,6 +1,6 @@
 {
   "name": "@mbse/diagrams",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Diagrams of mbse-schemas data, laid out incrementally: logical, container and physical layouts, each a deterministic function of a mutation sequence (TypeScript implementation)",
   "keywords": ["diagrams", "layout", "incremental layout", "visualization", "mbse", "sysml"],
   "type": "module",

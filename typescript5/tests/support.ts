@@ -1,24 +1,24 @@
 /**
- * The suites' bench: a store with the layouts installed and one diagram, `overview`, and a step for each mutation the
- * container layout follows, each a transaction expression, journalled, then given to `Container`.
+ * The suites' bench: two stores with the layouts installed and one diagram, `overview`, and a step for each kind of
+ * mutation, each a transaction expression run in the source store; its effect, a journal entry, is journalled and
+ * followed by a `Driver` in the layout store, which the suites read.
  *
  * A shape is named by its handle, the path it was made at: `cpu` a top-level shape, `cpu.a` the child `a` of `cpu`.
  * Every shape is owned by the diagram, by its handle, which is unique in it, and is a member of it, contained or not;
  * a child is contained by the grid its container owns, a relation alone, so that a shape moved keeps its handle, and a
  * top-level shape by none: the diagram's grid holds it. A step that makes a shape writes its roles, membership and
- * containment, and the grid that holds it where its container, or the diagram, has none; a step that lays out or turns a container writes its grid's settings,
- * making the grid where it has none; every other step finds a shape by its handle alone. Names are shown without their
- * container's part: `a`, for `cpu.a`. Each step runs its mutation, then, in a transaction of its own, the `Container`
- * function that follows it, and gives back the adjustments it made, as JSON text, each shape by its name; or the error
- * the function raised, as text. A move, out of a container or into one, is anticipated: `Container.removing` runs
- * first, then `Container.added` places the shape where it went. `replay` runs the journal again, in a fresh store, and gives the steps whose adjustments differ, or
- * whose placements differ by more than two millionths of a unit: none, where the layout is a function of its mutation
- * sequence.
+ * containment, and the grid that holds it where its container, or the diagram, has none; a step that lays out or turns
+ * a container writes its grid's settings, making the grid where it has none; every other step finds a shape by its
+ * handle alone. Names are shown without their container's part: `a`, for `cpu.a`. Each step gives back the container
+ * layout's adjustments to its entry, as JSON text, each shape by its name; none for a step that changed nothing.
+ * `replay` has a fresh driver follow the journal again, in a fresh layout store, and gives the steps whose adjustments
+ * differ, or whose placements differ by more than two millionths of a unit: none, where the layout is a function of
+ * its journal. A physical bench's layout store also places each step, and `placed` is what placement wrote.
  */
 
-import { Builders, JSON as Json, Plain, Validators } from "@mbse/schemas/Framework";
+import { Builders, Changes, JSON as Json, Plain, Validators } from "@mbse/schemas/Framework";
 
-import { Container, Logical, Physical, Placement } from "../src/Framework/index.js";
+import { Container, Driver, Logical, Physical, Placement } from "../src/Framework/index.js";
 
 /** Python's `assert`. */
 export function assert(condition: unknown, message = "assertion failed"): asserts condition {
@@ -65,23 +65,29 @@ export function spec_name(b: string, degrees: number): string {
   return `to ${b} ${degrees}`;
 }
 
-type Entry = [string, unknown[], string, string, string];
+type Entry = [string, unknown[], string | null, string, string];
 type Spec = (_: any) => any;
 
 export class Bench {
+  /** Where each step's mutation runs, observed. */
+  source: any;
+  /** The layout store, which a `Driver` keeps by the source's effects. */
   store: any;
+  effects: any[] = [];
+  driver: Driver.Driver;
   journal: Entry[] = [];
-  /** Whether each step is also placed, physically, by `placement`; `placed` is the mutation it wrote, as text. */
+  /** Whether the layout store places each step; `placed` is the mutation placement wrote, as text. */
   physical: boolean;
   placed = "";
-  placement: Placement.Layout | null = null;
 
   constructor(fresh = true, physical = false) {
+    this.source = new Builders.Store();
     this.store = new Builders.Store();
-    this.store.transaction(Logical.install);
-    this.store.transaction(Container.install);
+    const installs = [Logical.install, Container.install, ...(physical ? [Physical.install] : [])];
+    for (const store of [this.source, this.store]) for (const install of installs) store.transaction(install);
+    Changes.observe(this.source, (effect: any) => this.effects.push(effect));
+    this.driver = new Driver.Driver(this.store);
     this.physical = physical;
-    if (physical) this.store.transaction(Physical.install);
     if (fresh) this.logical([]); // the diagram, `overview`
   }
 
@@ -215,14 +221,14 @@ export class Bench {
     return boxes.map((box) => Validators.Validate(this.store).Reachable(this.store.Logical.OfShape, this.shape(box)));
   }
 
-  /** Runs the journal again, in order, in a fresh store, and gives the steps whose adjustments differ, or whose
-   * placements differ by more than two millionths of a unit, as Python's Kiwi's last bits may. */
+  /** Has a fresh driver follow the journal again, in order, in a fresh layout store, as a viewer would, and gives the
+   * steps whose adjustments differ, or whose placements differ by more than two millionths of a unit, as Python's
+   * Kiwi's last bits may. */
   replay(): number[] {
     const again = new Bench(false, this.physical);
     const differ: number[] = [];
     this.journal.forEach(([kind, args, entry, adjusted, placed], i) => {
-      const tx = Plain.FromPlain(again.store).Transaction(Json.loads(entry));
-      const was = again.apply(kind, args, tx) !== adjusted;
+      const was = again.apply(kind, args, entry) !== adjusted;
       if (was || (placed !== again.placed && (!placed || !again.placed || unmatched(placed, again.placed).length))) {
         differ.push(i);
       }
@@ -242,7 +248,7 @@ export class Bench {
 
   private expressing(paths: string[], made: string[], spec: boolean | Record<string, any>, specs: Spec[],
     grids: string[]): any {
-    const L = this.store.Logical;
+    const L = this.source.Logical;
     const d = symbol("");
     const symbols: Record<string, any> = { directory: L.DiagramDirectory, [d]: L.OfDiagram };
     const found: Spec[] = [
@@ -271,7 +277,7 @@ export class Bench {
     // after their owners', so that the upsert finds each by its owner and name, never by ranging over all
     if (spec === true) symbols.spec = L.OfAdjacency;
     else if (spec) Object.assign(symbols, spec);
-    return this.store.Mutations.OfTransaction((t: any) => t.mutations([(mu: any) => mu.upsert((u: any) => u.exists([
+    return this.source.Mutations.OfTransaction((t: any) => t.mutations([(mu: any) => mu.upsert((u: any) => u.exists([
       (p: any) => p.symbols(symbols).spec([...found, ...specs])]))]));
   }
 
@@ -280,84 +286,26 @@ export class Bench {
     return this.stepping(kind, args, paths, [], spec, specs, []);
   }
 
+  /** Runs a step's mutation in the source store, and has the driver follow its effect, its journal entry, in the
+   * layout store: none, where the mutation changed nothing. */
   private stepping(kind: string, args: unknown[], paths: string[], made: string[], spec: boolean | Record<string, any>,
     specs: Spec[], grids: string[]): string {
-    const tx = this.expressing(paths, made, spec, specs, grids);
-    const adjusted = this.apply(kind, args, tx);
-    this.journal.push([kind, args, Json.dumps(Plain.ToPlain(this.store).Transaction(tx)), adjusted, this.placed]);
+    const count = this.effects.length;
+    this.source.transaction(this.expressing(paths, made, spec, specs, grids));
+    const entry = this.effects.length > count
+      ? Json.dumps(Plain.ToPlain(this.source).Transaction(this.effects[this.effects.length - 1])) : null;
+    const adjusted = this.apply(kind, args, entry);
+    this.journal.push([kind, args, entry, adjusted, this.placed]);
     return adjusted;
   }
 
-  /** Runs the mutation `tx`, then the `Container` function that follows a mutation of `kind`, in a transaction of its
-   * own, or first, for a removal: its adjustments, or its error, as text. */
-  apply(kind: string, args: unknown[], tx: any): string {
-    this.placed = "";
-    const box = (args[0] ?? "") as string;
-    const refused = (error: unknown): string => {
-      if (error instanceof Error && error.name === "ValueError") return `ValueError: ${error.message}`;
-      throw error;
-    };
-    const moved = kind === "unchild" ? (args.slice(1) as string[]).map((n) => path(box, n))
-      : kind === "move" ? [args[0] as string] : [];
-    if (this.physical) for (const handle of moved) this.placement?.removing(this.shape(handle)); // placed again
-    if (kind === "unchild" || kind === "move" || kind === "unspec") { // anticipated: before the mutation
-      let named = "";
-      let adjustments: unknown[] = [];
-      try {
-        this.store.transaction(() => {
-          adjustments = moved.length ? moved.flatMap((h) => Container.removing(this.shape(h)))
-            : [...this.shape(path(box, args[1] as string)).adjacent_to]
-              .filter((e: any) => name_of([...e.adjacency.to_shape][0].shape) === args[2])
-              .flatMap((e: any) => Container.unjoining(e.adjacency));
-          named = text(adjustments); // named while what it removes still exists
-        });
-      } catch (error) {
-        named = refused(error);
-      }
-      const [after] = this.store.transaction(tx);
-      if (moved.length && !named.startsWith("ValueError")) { // each placed where it went
-        this.store.transaction(() => {
-          adjustments = [...adjustments, ...moved.flatMap((h) => Container.added(this.shape(h)))];
-        });
-        named = text(adjustments);
-      }
-      this.follow([...after.values()]);
-      return named;
-    }
-    const [frame] = this.store.transaction(tx);
-    if (kind === "logical" || kind === "points") {
-      this.follow([...frame.values()]);
-      return "";
-    }
-    const at = (p: string): any => frame.get(symbol(p));
-    let adjustments: unknown[] = [];
-    try {
-      this.store.transaction(() => {
-        if (kind === "child") {
-          adjustments = Container.added(at(path(box, args[1] as string)));
-        } else if (kind === "spec") {
-          adjustments = Container.adjoined(frame.get("spec"));
-        } else if (kind === "defaults") {
-          adjustments = Container.defaulted(at(""));
-        } else { // its grid's settings
-          adjustments = Container.configured(frame.get(grid_symbol(box)));
-        }
-      });
-    } catch (error) {
-      return refused(error);
-    }
-    this.follow([...frame.values()]);
+  /** The driver follows a journal entry, `entry`, plain data as text, or nothing: the container layout's adjustments,
+   * as text; `placed` is what placement wrote. */
+  apply(_kind: string, _args: unknown[], entry: string | null): string {
+    const [adjustments, tx] = entry === null ? [[], null]
+      : this.driver.follow(Plain.FromPlain(this.store).Transaction(Json.loads(entry)));
+    this.placed = !this.physical ? "" : tx === null ? "[]" : written(this.store, tx);
     return text(adjustments);
-  }
-
-  /** The physical layout follows a mutation that touched `touched`, once the container layout has: the mutation it
-   * returns is run, and `placed` is what it wrote. */
-  private follow(touched: any[]): void {
-    if (!this.physical) return;
-    this.placement ??= new Placement.Layout(this.overview);
-    const tx = this.placement.follow(touched);
-    this.placed = tx === null ? "[]" : written(this.store, tx);
-    if (tx !== null) this.store.transaction(tx);
   }
 
   /** Where the store's frames and placements differ from a layout of the diagram made afresh, from what it holds now,
@@ -400,7 +348,7 @@ export class Bench {
    * length]`: a mutation of the logical layout alone, which the physical layout follows. Returns its placement, as
    * text. */
   points(at: string, extents: [string, number, number][]): string {
-    const L = this.store.Logical;
+    const L = this.source.Logical;
     const s = symbol(at);
     const symbols: Record<string, any> = { origin: L.OfPoint };
     const specs: Spec[] = [

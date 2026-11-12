@@ -5,15 +5,15 @@ physical layout each leaves, and writes a page to step through them.
 
 Runs the code cells of each test notebook that uses the bench (`tests/support.py`), in order, as the notebook would,
 with the bench's steps wrapped: each step is recorded with the case it belongs to (its markdown heading, `## ID ·
-title`), its mutation, as the bench journals it, the adjustments the container layout made to it, and its container's
+title`), its journal entry, the effect the bench journals, the adjustments the container layout made to it, and its container's
 data model and container model before and after. The container model is then replayed one adjustment at a time, so
 that the page shows each adjustment's state; replayed, each step must end where the container layout did, which the
 tool checks. Each step also records the physical layout of the whole diagram before and after it, and the frames and
 placements its placement mutation wrote; the page's third column shows either layout, toggled, and a timeline shows each
 mutation's passes: each of the container layout's adjustments, then placement, before which the physical layout is shown
-as it was. A notebook that does not itself deal in `Physical` builds its benches without placement: the tool places
-them, with a minimum shape size and a margin, so that shapes with no points can be seen, and its assertions, on the
-container layout, are unaffected. Nothing in the notebooks is copied or changed. The page is written to
+as it was. A notebook that does not itself deal in `Physical`, nor read a placement, builds its benches without
+placement: the tool places them, with a minimum shape size and a margin, so that shapes with no points can be seen,
+and its assertions, on the container layout, are unaffected. Nothing in the notebooks is copied or changed. The page is written to
 `tools/.trace/container.html`, which `--open` opens in a browser.
 
 A tool for reading the tests, not a test: Python only, standard library only beyond the package itself.
@@ -245,15 +245,18 @@ def wrap() -> None:
         adjusted = original(self, kind, args, paths, *specs, spec=spec, made=made, grids=grids)
         data_after, model_after = data_model(self, box), container_model(self, box)
         physical_after = physical_model(self)
-        mutation = json.loads(self.journal[-1][2])
-        error = adjusted if adjusted.startswith("ValueError") else None
-        adjustments = [] if error or not adjusted else json.loads(adjusted)
+        entry = self.journal[-1][2]
+        mutation = json.loads(entry) if entry else None  # the step's journal entry, its effect; none where it changed nothing
+        error = None  # the driver refuses nothing
+        adjustments = json.loads(adjusted)
         states, state = [], model_before
         moved = ({support.name_of(self.shape(support.Bench._path(args[0], n))) for n in args[1:]} if kind == "unchild"
                  else {support.name_of(self.shape(args[0]))} if kind == "move" else set())
         for adjustment in adjustments:
             other = adjustment["kind"] == "grid" and state is not None and adjustment["container"] != state["container"]
-            if (adjustment["kind"] == "place" and adjustment["shape"] in moved) or other:
+            if kind == "logical":  # an entry of any kind, which may adjust several grids: shown as it ends
+                state = model_after
+            elif (adjustment["kind"] == "place" and adjustment["shape"] in moved) or other:
                 moved = set()  # where it went, or another grid's settings: another container's adjustments, after
                 state = model_after
             elif not moved or adjustment["kind"] != "place":
@@ -294,7 +297,7 @@ def wrap() -> None:
         # outside the journal, which placement would see and a replay could not; only its adjustments are compared
         again = support.Bench(False, True)
         return [i for i, (kind, args, entry, adjusted, _) in enumerate(self.journal)
-                if again._apply(kind, args, Plain.FromPlain(again.store).Transaction(JSON.loads(entry))) != adjusted]
+                if again._apply(kind, args, entry) != adjusted]
 
     support.Bench.replay = replaying
 
@@ -305,7 +308,7 @@ def run(notebook: Path) -> None:
     title = next(("".join(c["source"]).splitlines()[0].lstrip("# ") for c in cells if c["cell_type"] == "markdown"
                   and "".join(c["source"]).startswith("# ")), notebook.stem)
     RECORDER.start(notebook.name, title)
-    PLACE["force"] = "Physical" not in notebook.read_text()
+    PLACE["force"] = not any(word in notebook.read_text() for word in ("Physical", ".placement("))  # one that reads it
     namespace: dict[str, Any] = {"__name__": "__main__"}
     for cell in cells:
         source = "".join(cell["source"])

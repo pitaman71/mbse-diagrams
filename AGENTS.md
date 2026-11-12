@@ -5,7 +5,8 @@ logical layout of shapes, points, vectors, segments and adjacency specs, each ow
 layout of the grids each container's children are placed in, and a physical layout of coordinates in diagram units, each
 a deterministic function of a mutation sequence. Two implementations exist, `python3/` and `typescript5/`, equivalent.
 Built so far: the logical
-layout's schemas (`Logical`); the container layout's implied grids, filled in order and rearranged by adjacency specs,
+layout's schemas, each container's grid among them (`Logical`); the container layout's cells of each grid, filled in
+order and rearranged by adjacency specs,
 the later of two conflicting specs ignored until it can be met (`Container`); the physical layout's schemas
 (`Physical`); and the incremental physical placement of points and frames (`Placement`), its rules as engine-neutral
 linear constraints (`Constraints`) solved by Kiwi (`Kiwi`), writing what it places as mutations.

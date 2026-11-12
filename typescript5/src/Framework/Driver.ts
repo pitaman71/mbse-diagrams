@@ -69,9 +69,9 @@ export class Driver {
       if ("reference" in bound) {
         const plain = Json.loads(JSON.stringify(bound.reference)); // plain data, as mbse-schemas reads it
         const reference = Plain.FromPlain(store)(store.registered("References.OfObject"), plain);
-        const found: any = References.resolve(store, reference);
+        const found: any = References.resolve(store, reference); // decoded, so the store holds it
         held.set(name, found);
-        schemas.set(name, [...[found].filter((x) => x !== null).map((x) => x.as_schema()), null][0]); // null for none
+        schemas.set(name, found.as_schema());
       } else {
         schemas.set(name, store.registered(schemaName(bound.schema[0].$ref)));
       }
@@ -89,26 +89,26 @@ export class Driver {
         moving.add(links.shape as string);
       } else if (relation === "Logical.AdjacencyFrom" || relation === "Logical.AdjacencyTo") {
         const adjacency = links.adjacency as string;
-        (held.get(adjacency) != null ? specsGone : specsNew).add(adjacency);
+        (held.has(adjacency) ? specsGone : specsNew).add(adjacency);
         specsNew.add(adjacency);
       } else if (relation === "Logical.Owns" && verb === "remove" && !("owned" in links)) {
-        const owner = held.get(links.owner as string);
-        for (const e of [owner].filter((x) => x != null).flatMap((x) => [...x.owns])) {
+        for (const e of held.get(links.owner as string).owns) {
           if (e.name.get() === values.name && e.owned.as_schema().name === "Logical.OfAdjacency") goneSpecs.push(e.owned);
         }
       }
     }
     for (const [symbol, name] of assigned) {
       const schema = schemas.get(symbol);
-      if (name === "rotation" && schema != null && schema.name === "Logical.OfAdjacency") {
-        if (held.get(symbol) != null) specsGone.add(symbol);
+      if (name === "rotation" && schema.name === "Logical.OfAdjacency") {
+        if (held.has(symbol)) specsGone.add(symbol);
         specsNew.add(symbol);
       }
     }
 
     // before: what the effect removes, while it still exists
     const adjustments: Container.Adjustment[] = [];
-    const leaving = [...moving].map((s) => held.get(s)).filter((shape) => shape != null && [...shape.cell].length > 0);
+    const leaving = [...moving].filter((s) => held.has(s)).map((s) => held.get(s))
+      .filter((shape) => [...shape.cell].length > 0);
     const left = leaving.map((shape) => Logical.holding(shape)); // the grids they leave, which placement follows too
     const unjoined = [...goneSpecs, ...[...specsGone].map((s) => held.get(s))];
     store.transaction(() => {

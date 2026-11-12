@@ -64,8 +64,8 @@ class Driver:
         for name, bound in pattern["symbols"].items():
             if "reference" in bound:
                 reference = Plain.FromPlain(store)(store.registered("References.OfObject"), bound["reference"])
-                held[name] = References.resolve(store, reference)
-                schemas[name] = None if held[name] is None else held[name].as_schema()
+                held[name] = References.resolve(store, reference)  # decoded, so the store holds it
+                schemas[name] = held[name].as_schema()
             else:
                 schemas[name] = store.registered(_schema_name(bound["schema"][0]["$ref"]))
         entries, assigned = _sectioned(pattern, schemas)
@@ -80,22 +80,21 @@ class Driver:
             elif relation == "Logical.InDiagram" and verb == "insert":
                 moving[links["shape"]] = None
             elif relation in ("Logical.AdjacencyFrom", "Logical.AdjacencyTo"):
-                (specs_gone if held.get(links["adjacency"]) is not None else specs_new)[links["adjacency"]] = None
+                (specs_gone if links["adjacency"] in held else specs_new)[links["adjacency"]] = None
                 specs_new[links["adjacency"]] = None
             elif relation == "Logical.Owns" and verb == "remove" and "owned" not in links:
-                owner = held.get(links["owner"])
-                for e in [] if owner is None else owner.owns:
+                for e in held[links["owner"]].owns:
                     if e.name.get() == values.get("name") and e.owned.as_schema().name == "Logical.OfAdjacency":
                         gone_specs.append(e.owned)
         for symbol, name in assigned:
-            if name == "rotation" and schemas[symbol] is not None and schemas[symbol].name == "Logical.OfAdjacency":
-                if held.get(symbol) is not None:
+            if name == "rotation" and schemas[symbol].name == "Logical.OfAdjacency":
+                if symbol in held:
                     specs_gone[symbol] = None
                 specs_new[symbol] = None
 
         # before: what the effect removes, while it still exists
         adjustments: list[dict[str, Any]] = []
-        leaving = [held[s] for s in moving if held.get(s) is not None and list(held[s].cell)]
+        leaving = [held[s] for s in moving if s in held and list(held[s].cell)]
         left = [Logical.holding(shape) for shape in leaving]  # the grids they leave, which placement follows too
         unjoined = [*gone_specs, *(held[s] for s in specs_gone)]
         with store.transaction():

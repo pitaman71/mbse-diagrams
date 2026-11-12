@@ -69,7 +69,7 @@ export class Driver {
       if ("reference" in bound) {
         const plain = Json.loads(JSON.stringify(bound.reference)); // plain data, as mbse-schemas reads it
         const reference = Plain.FromPlain(store)(store.registered("References.OfObject"), plain);
-        const found: any = References.resolve(store, reference); // decoded, so the store holds it
+        const found: any = References.resolve(store, reference); // a store following its journal holds what it names
         held.set(name, found);
         schemas.set(name, found.as_schema());
       } else {

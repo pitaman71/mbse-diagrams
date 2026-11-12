@@ -64,7 +64,7 @@ class Driver:
         for name, bound in pattern["symbols"].items():
             if "reference" in bound:
                 reference = Plain.FromPlain(store)(store.registered("References.OfObject"), bound["reference"])
-                held[name] = References.resolve(store, reference)  # decoded, so the store holds it
+                held[name] = References.resolve(store, reference)  # a store following its journal holds what it names
                 schemas[name] = held[name].as_schema()
             else:
                 schemas[name] = store.registered(_schema_name(bound["schema"][0]["$ref"]))

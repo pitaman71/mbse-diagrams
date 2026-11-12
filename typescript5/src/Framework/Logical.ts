@@ -6,14 +6,21 @@
  * one relation, `Logical.Owns`, keyed by a `name` unique among its owner's: a diagram by the singleton
  * `Logical.Diagrams`; every shape by its diagram, contained or not
  * ([CAP-264: containment separate from ownership](mbse:mbse-basis/docs/capabilities/README.md#CAP-264)); a shape's
- * points, vectors, segments and the adjacency specs from it by the shape. `Container` and `Physical` own theirs through
- * it too. What part each plays is a relation of its own, which owns nothing:
+ * points, vectors, segments, the adjacency specs from it and its grid by the shape; the diagram's grid by the diagram.
+ * `Container` and `Physical` own theirs through it too, but for a grid's cells. What part each plays is a relation of
+ * its own, which owns nothing:
  *
  * - a diagram is in the directory (`Logical.InDiagrams`), and every shape a member of its diagram (`Logical.InDiagram`),
  *   contained or not: containment is not membership;
- * - a child shape is in its container, one each (`Logical.Containment`), in the order it was added; a shape with none
- *   is at its diagram's top level, and moving a shape into or out of a container changes this entry alone, so that the
- *   shape keeps its identity and what it owns;
+ * - a container, a shape or the diagram, owns at most one grid, a `Logical.OfGrid`, as `grid`, which holds its
+ *   children, each in one grid (`Logical.Containment`), in the order it was added: containment is a path through
+ *   ownership, so that a child can be contained only by a grid, and a container has only one. The diagram's grid holds
+ *   its top-level shapes; a shape no grid holds is in no container at all. Moving a shape from one grid to another
+ *   changes this entry alone, so that the shape keeps its identity and what it owns. A grid's settings are its own
+ *   properties: `span`, the cells it holds along the axis it does not grow along, a positive int; `grows`, that axis,
+ *   `"rows"` or `"columns"`; and `cell_rotation`, a `Logical.OfRotation`, its cells' turn from its container's compass.
+ *   Where a grid sets none, or one outside those values, its diagram's `grid_span` and `grid_grows` apply, then 3 and
+ *   `"rows"` ([the grid in the logical layout](mbse:mbse-basis/docs/capabilities/README.md#CAP-280));
  * - a shape has one `origin` point (`Logical.Origin`), and `borders` and `extents` points (`Logical.Borders`,
  *   `Logical.Extents`), each connected to the origin by a vector;
  * - a `Logical.OfVector` runs from its `start` point to its `end` point (`Logical.VectorStart`, `Logical.VectorEnd`),
@@ -25,14 +32,19 @@
  *
  * `compass(x)` resolves the logical compass of a point or a shape, as degrees clockwise from the diagram's north, by
  * the rules of [the diagrams proposal](mbse:mbse-basis/proposals/DIAGRAMS.md): a shape's is its origin's; an origin's
- * its enclosing cell's, which is its container's turned by the rotation of its container's cells, where `Container`
- * gives it a cell, and so on to the diagram, whose compass is north; a border or extent point's its origin's, turned by
- * the rotation of the vector from its origin.
+ * its enclosing cell's, which is its container's turned by the rotation of the cells of the grid that holds it, and so
+ * on to the diagram, whose compass is north; a border or extent point's its origin's, turned by the rotation of the
+ * vector from its origin.
  */
 
 import { Errors } from "@mbse/schemas/Framework";
 
 const { ValueError } = Errors;
+
+/** A grid's span and axis, where neither it nor its diagram sets one. */
+export const SPAN = 3n;
+export const GROWS = "rows";
+export const AXES = ["rows", "columns"];
 
 /** The logical layout's schemas, defined in the store a transaction writes: `store.transaction(Logical.install)`. Run
  * again in a store, it finds each by its name and writes nothing. */
@@ -47,7 +59,8 @@ export function install(txn: any): any {
   return txn.uid("mbse.Diagrams.Logical/1").mutations([(mu: any) => mu.upsert((u: any) => u.exists([(p: any) => p
     .symbols({
       Owns: S.OfRelation, OfRotation: S.OfObject, Diagrams: S.OfObject, InDiagrams: S.OfRelation,
-      OfDiagram: S.OfObject, InDiagram: S.OfRelation, OfShape: S.OfObject, Containment: S.OfRelation,
+      OfDiagram: S.OfObject, InDiagram: S.OfRelation, OfShape: S.OfObject, OfGrid: S.OfObject,
+      Containment: S.OfRelation,
       OfPoint: S.OfObject, Origin: S.OfRelation, Borders: S.OfRelation, Extents: S.OfRelation,
       OfVector: S.OfObject, VectorStart: S.OfRelation, VectorEnd: S.OfRelation, OfSegment: S.OfObject,
       SegmentEnds: S.OfRelation, OfAdjacency: S.OfObject, AdjacencyFrom: S.OfRelation,
@@ -66,7 +79,10 @@ export function install(txn: any): any {
         (t: any) => t.name("diagrams").relation([_.InDiagrams]).me("directory"),
       ]),
       role("Logical.InDiagrams", ["directory", "diagram"], [["directory"]]),
-      (_: any) => _.OfDiagram.name("Logical.OfDiagram").ref(true).adjacencies([
+      (_: any) => _.OfDiagram.name("Logical.OfDiagram").ref(true).properties({
+        grid_span: S.OfInt, // a grid's span and axis, where it sets none
+        grid_grows: S.OfStr,
+      }).adjacencies([
         (t: any) => owned(t, _),
         (t: any) => owns(t, _),
         (t: any) => t.name("directory").relation([_.InDiagrams]).me("diagram"),
@@ -77,15 +93,23 @@ export function install(txn: any): any {
         (t: any) => owned(t, _),
         (t: any) => owns(t, _),
         (t: any) => t.name("diagram").relation([_.InDiagram]).me("shape"),
-        (t: any) => t.name("container").relation([_.Containment]).me("child"),
-        (t: any) => t.name("children").relation([_.Containment]).me("container"),
+        (t: any) => t.name("container").relation([_.Containment]).me("child"), // the grid that holds it
         (t: any) => t.name("origin").relation([_.Origin]).me("shape"),
         (t: any) => t.name("borders").relation([_.Borders]).me("shape"),
         (t: any) => t.name("extents").relation([_.Extents]).me("shape"),
         (t: any) => t.name("adjacent_to").relation([_.AdjacencyFrom]).me("shape"),
         (t: any) => t.name("adjacent_from").relation([_.AdjacencyTo]).me("shape"),
       ]),
-      role("Logical.Containment", ["container", "child"], [["container"]]), // one container per child
+      (_: any) => _.OfGrid.name("Logical.OfGrid").ref(true).properties({
+        span: S.OfInt, // the cells along the axis it does not grow along: a positive int
+        grows: S.OfStr, // the axis it grows along: "rows" or "columns"
+        cell_rotation: _.OfRotation, // each cell's, from its container's compass
+      }).adjacencies([
+        (t: any) => owned(t, _), // by its container, as "grid"
+        (t: any) => owns(t, _),
+        (t: any) => t.name("children").relation([_.Containment]).me("grid"),
+      ]),
+      role("Logical.Containment", ["grid", "child"], [["grid"]]), // one grid per child
       (_: any) => _.OfPoint.name("Logical.OfPoint").ref(true).adjacencies([
         (t: any) => owned(t, _),
         (t: any) => t.name("origin_of").relation([_.Origin]).me("point"),
@@ -125,16 +149,42 @@ export function install(txn: any): any {
     ])]))]);
 }
 
-/** What owns `x`, through `Logical.Owns`, or `null` for the directory. */
+/** What owns `x`, through whichever relation its schema marks its owner's, or `null` for the directory. */
 export function owner_of(x: any): any {
-  for (const entry of x.owner) return entry.owner;
+  for (const adjacency of x.as_schema().adjacencies.values()) {
+    if (adjacency.owner) {
+      const [link] = [...adjacency.relation.entry.links.keys()].filter((k: string) => k !== adjacency.me);
+      return [...[...x[adjacency.name]].map((entry: any) => entry[link]), null][0]; // the first, or null
+    }
+  }
   return null;
 }
 
-/** `x`'s name among its owner's. */
+/** `x`'s name among its owner's, where `Logical.Owns` owns it. */
 export function name_of(x: any): string | null {
-  for (const entry of x.owner) return entry.name.get();
+  if (!x.as_schema().adjacencies.has("owner")) return null;
+  return [...[...x.owner].map((entry: any) => entry.name.get()), null][0]; // the first, or null
+}
+
+/** The grid a container, a shape or the diagram, owns, or `null`. */
+export function grid_of(container: any): any {
+  for (const entry of container.owns) if (entry.name.get() === "grid") return entry.owned;
   return null;
+}
+
+/** The container a shape is in: the shape or the diagram whose grid holds it, or `null` where no grid does. */
+export function container_of(shape: any): any {
+  for (const entry of shape.container) return owner_of(entry.grid);
+  return null;
+}
+
+/** A grid's span and axis, as they apply: its own, where valid; else its diagram's; else 3 and `"rows"`. */
+export function settings(grid: any): [bigint, string] {
+  let diagram = owner_of(grid);
+  while (diagram.as_schema().name !== "Logical.OfDiagram") diagram = owner_of(diagram);
+  const span = [grid.span.get(), diagram.grid_span.get()].find((v) => typeof v === "bigint" && v >= 1n) ?? SPAN;
+  const grows = [grid.grows.get(), diagram.grid_grows.get()].find((v) => AXES.includes(v)) ?? GROWS;
+  return [span, grows];
 }
 
 /** A vector's start and end points. */
@@ -170,20 +220,15 @@ export function compass(x: any): number {
   return (((enclosing(shape) + degrees) % 360) + 360) % 360;
 }
 
-/** The compass of the cell that encloses `shape`'s origin: its container's, turned by the rotation of its container's
- * cells, where container layout gives it a cell, and so on to the diagram, whose compass is north. */
+/** The compass of the cell that encloses `shape`'s origin: its container's, turned by the rotation of the cells of the
+ * grid that holds it, and so on to the diagram, whose compass is north. */
 function enclosing(shape: any): number {
   let turn = 0;
   for (;;) {
-    if (shape.as_schema().adjacencies.has("cell")) {
-      for (const entry of shape.cell) {
-        const [place] = [...entry.cell.grid];
-        turn += place.grid.cell_rotation.degrees.get();
-      }
-    }
-    const containers = [...shape.container].map((e: any) => e.container);
-    if (containers.length === 0) return ((turn % 360) + 360) % 360;
-    shape = containers[0];
+    const grids = [...shape.container].map((e: any) => e.grid);
+    if (grids.length === 0) return ((turn % 360) + 360) % 360;
+    turn += grids[0].cell_rotation.degrees.get() ?? 0;
+    shape = owner_of(grids[0]);
   }
 }
 

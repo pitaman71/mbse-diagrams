@@ -20,7 +20,7 @@
  *   the diagram; its `relative` coordinates, from the point it is measured from, its shape's origin for a border or
  *   extent point, its enclosing cell's frame's top left for an origin; and its `direction`, its compass resolved to an
  *   absolute direction, in degrees clockwise from the diagram's north.
- * - The `frame` of a `Logical.OfDiagram`, a `Logical.OfShape`, a `Container.OfGrid` and a `Container.OfCell`
+ * - The `frame` of a `Logical.OfDiagram`, a `Logical.OfShape`, a `Logical.OfGrid` and a `Container.OfCell`
  *   (`Physical.DiagramFrame`, `Physical.ShapeFrame`, `Physical.GridFrame`, `Physical.CellFrame`), a `Physical.OfFrame`:
  *   its rectangle's top left, `absolute`, in the diagram, and `relative`, from the frame that encloses it, its `size`,
  *   and its `unit_length`. The diagram's frame is its size, which grows and shrinks with its cells.
@@ -101,7 +101,7 @@ export function install(txn: any): any {
       (_: any) => _.Shape.name("Logical.OfShape").adjacencies([
         (t: any) => t.name("frame").relation([_.ShapeFrame]).me("shape"),
       ]),
-      (_: any) => _.Grid.name("Container.OfGrid").adjacencies([
+      (_: any) => _.Grid.name("Logical.OfGrid").adjacencies([
         (t: any) => t.name("frame").relation([_.GridFrame]).me("grid"),
       ]),
       (_: any) => _.Cell.name("Container.OfCell").adjacencies([

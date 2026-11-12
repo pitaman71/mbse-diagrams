@@ -40,7 +40,6 @@
 import { Proxies } from "@mbse/schemas/Framework";
 
 import { type Constraint, ConstraintSet, type Engine, type Op, signature } from "./Constraints.js";
-import * as Container from "./Container.js";
 import { KiwiEngine } from "./Kiwi.js";
 import * as Logical from "./Logical.js";
 import * as Physical from "./Physical.js";
@@ -83,7 +82,7 @@ interface Element {
 /** `x`'s unit length: the diagram's, or a shape's, its container's times the scaling factor. */
 export function unit_length(x: any): number {
   if (isDiagram(x)) return tuning(x).unit;
-  return unit_length(Container.container_of(x)) * tuning(diagramOf(x)).scaling;
+  return unit_length(containerOf(x)) * tuning(diagramOf(x)).scaling;
 }
 
 /** One diagram's physical layout, followed one mutation at a time. */
@@ -164,13 +163,13 @@ export class Layout {
     let at = x;
     while (!isDiagram(at) && !isShape(at)) at = Logical.owner_of(at); // a point, vector, segment, spec, grid or cell
     this.dirty.add(this.element(at));
-    if (isShape(at)) this.dirty.add(this.element(Container.container_of(at))); // where it is held
+    if (isShape(at)) this.dirty.add(this.element(containerOf(at))); // where it is held
   }
 
   private element(x: any): Element {
     let e = this.elements.get(x);
     if (e === undefined) {
-      const depth = isDiagram(x) ? 0 : (this.element(Container.container_of(x)).depth + 1);
+      const depth = isDiagram(x) ? 0 : (this.element(containerOf(x)).depth + 1);
       e = { x, key: `e${this.made++}.${Logical.name_of(x)}`, depth, unit: unit_length(x), turn: 0,
         constraints: new Map(), annotations: new Map(), children: new Set() };
       this.elements.set(x, e);
@@ -256,7 +255,7 @@ export class Layout {
     if (grid === null) return; // the diagram, once it has its grid, or a shape, once it is a container
     const t = tuning(diagramOf(e.x));
     const m = t.margin;
-    const [unit, turn] = [e.unit * t.scaling, e.turn + grid.cell_rotation.degrees.get()];
+    const [unit, turn] = [e.unit * t.scaling, e.turn + (grid.cell_rotation.degrees.get() ?? 0)];
     const at = (): Pair => (diagram ? [0, 0] : [value("L"), value("T")]);
     if (diagram) {
       add("grid.left", c("==", 0, [1, v("gL")]));
@@ -288,7 +287,7 @@ export class Layout {
           [-1, v(`${axis}${count - 1}.${length}`)]));
       }
     }
-    const rows = grid.grows.get() === "rows";
+    const rows = Logical.settings(grid)[1] === "rows";
     for (const cell of cells) {
       const [cx, cy, cw, ch] = [`column${cell.column}.X`, `row${cell.row}.Y`, `column${cell.column}.W`,
         `row${cell.row}.H`];
@@ -349,13 +348,19 @@ function mutation(diagram: any, changed: [Annotation, number[]][]): any {
     if (kind === "Logical.DiagramDirectory") return "directory";
     let s = named.get(x);
     if (s === undefined) {
-      const owner = name(Logical.owner_of(x)); // owners first, so that the upsert finds each by its owner and name
+      const owner = name(Logical.owner_of(x)); // owners first, so that the upsert finds each by its owner and key
       s = `o${named.size}`;
       named.set(x, s);
       const [module, schema] = kind.split(".") as [string, string];
       symbols[s] = store[module][schema];
-      const [key, symbol] = [Logical.name_of(x) as string, s];
-      specs.push((_: any) => _[owner].owns({ [key]: (e: any) => e.owned(_[symbol]) }));
+      const symbol = s;
+      if (kind === "Container.OfCell") { // its grid's, by its row and column
+        const [r, k] = [x.row.get(), x.column.get()];
+        specs.push((_: any) => _[owner].cells((a: any) => a.insert((e: any) => e.cell(_[symbol]).row(r).column(k))));
+      } else {
+        const key = Logical.name_of(x) as string;
+        specs.push((_: any) => _[owner].owns({ [key]: (e: any) => e.owned(_[symbol]) }));
+      }
     }
     return s;
   };
@@ -414,8 +419,12 @@ function tuning(diagram: any): Tuning {
 }
 
 function gridOf(container: any): any {
-  for (const e of container.grid) return e.grid;
-  return null;
+  return Logical.grid_of(container);
+}
+
+/** The container a shape is in; the diagram's top level for one no grid holds. */
+function containerOf(shape: any): any {
+  return [Logical.container_of(shape), diagramOf(shape)].find((x) => x !== null);
 }
 
 /** A grid's cells, each with its row, column and shapes, in order. */

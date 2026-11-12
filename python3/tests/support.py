@@ -2,10 +2,10 @@
 container layout follows, each a transaction expression, journalled, then given to `Container`.
 
 A shape is named by its handle, the path it was made at: `cpu` a top-level shape, `cpu.a` the child `a` of `cpu`. Every
-shape is owned by the diagram, by its handle, which is unique in it, and is a member of it, contained or not; it is
-contained by the grid its container owns, the diagram's for a top-level shape, a relation alone, so that a shape moved
-keeps its handle. A step that makes a shape writes its roles, membership and containment, and the grid that holds it
-where its container has none; a step that lays out or turns a container writes its grid's settings, making the grid
+shape is owned by the diagram, by its handle, which is unique in it, and is a member of it, contained or not; a child is
+contained by the grid its container owns, a relation alone, so that a shape moved keeps its handle, and a top-level
+shape by none: the diagram's grid holds it. A step that makes a shape writes its roles, membership and containment, and
+the grid that holds it where its container, or the diagram, has none; a step that lays out or turns a container writes its grid's settings, making the grid
 where it has none; every other step finds a shape by its handle alone. Names are shown without their
 container's part: `a`, for `cpu.a`. Each step runs its mutation, then, in a transaction of its own, the `Container`
 function that follows it, and gives back the adjustments it made, as JSON text, each shape by its name; or the error the
@@ -206,8 +206,8 @@ class Bench:
             lambda x: x.remove(lambda e: e.name(n))) for n in names])
 
     def unchild(self, box: str, *names: str) -> str:
-        """The children `names` removed from `box`, in one mutation: each leaves its container's grid for the
-        diagram's, deleting nothing, with its adjacency specs, from and to it."""
+        """The children `names` removed from `box`, in one mutation: each leaves its container's grid, for the diagram's
+        top level, deleting nothing, with its adjacency specs, from and to it."""
         return self._relocate("unchild", (box, *names), [self._path(box, n) for n in names], box, "")
 
     def move(self, handle: str, to: str) -> str:
@@ -222,9 +222,11 @@ class Bench:
         paths, specs = [p for p in (here, to) if p] + list(handles), []
         for handle in handles:
             shape, s = self.shape(handle), symbol(handle)
-            specs.append(lambda _, s=s: getattr(_, grid_symbol(here)).children(
-                lambda x: x.remove(lambda e: e.child(getattr(_, s)))))
-            specs.append(lambda _, s=s: getattr(_, grid_symbol(to)).children([getattr(_, s)]))
+            if here:
+                specs.append(lambda _, s=s: getattr(_, grid_symbol(here)).children(
+                    lambda x: x.remove(lambda e: e.child(getattr(_, s)))))
+            if to:
+                specs.append(lambda _, s=s: getattr(_, grid_symbol(to)).children([getattr(_, s)]))
             for e in shape.adjacent_to:  # its own specs
                 specs.append(lambda _, s=s, n=Logical.name_of(e.adjacency): getattr(_, s).owns(
                     lambda x: x.remove(lambda e: e.name(n))))
@@ -366,8 +368,8 @@ class Bench:
     def _expression(self, paths: list[str], *specs: Any, spec: bool | dict[str, Any] = False,
                     made: list[str] | None = None, grids: list[str] | None = None) -> Any:
         """The mutation that finds the shapes `paths` and `made` by their handles, each owned by the diagram, making
-        those it does not find, writes the roles of those `made`, a member of the diagram and held by its container's
-        grid, finds the grids of the containers `grids`, `""` for the diagram's, making those it does not find, and
+        those it does not find, writes the roles of those `made`, a member of the diagram and, in a container, held by
+        its grid, finds the grids of the containers `grids`, `""` for the diagram's, making those it does not find, and
         writes `specs` over them."""
         L = self.store.Logical
         symbols: dict[str, Any] = {"directory": L.DiagramDirectory, symbol(""): L.OfDiagram}
@@ -390,11 +392,12 @@ class Bench:
 
         for handle in [*paths, *(made or [])]:
             shape(handle)
-        for handle in made or []:  # a member of the diagram, and held by its container's grid
+        for handle in made or []:  # a member of the diagram, and, in a container, held by its grid
             found.append(lambda _, s=symbol(handle): getattr(_, d).shapes([getattr(_, s)]))
             up = handle.rsplit(".", 1)[0] if "." in handle else ""
-            grid(up)
-            found.append(lambda _, s=symbol(handle), g=grid_symbol(up): getattr(_, g).children([getattr(_, s)]))
+            grid(up)  # the diagram's holds a top-level shape with no entry
+            if up:
+                found.append(lambda _, s=symbol(handle), g=grid_symbol(up): getattr(_, g).children([getattr(_, s)]))
         for box in grids or []:
             grid(box)
         # after their owners', so that the upsert finds each by its owner and name, never by ranging over all

@@ -122,8 +122,11 @@ def data_model(bench: Any, box: str) -> dict[str, Any] | None:
         return None
     if shape is None:
         return None
-    grid = Logical.grid_of(shape)
-    kids = [] if grid is None else [e.child for e in grid.children]
+    if box:
+        grid = Logical.grid_of(shape)
+        kids = [] if grid is None else [e.child for e in grid.children]
+    else:  # the top level: the members no shape's grid holds
+        kids = [e.shape for e in shape.shapes if not list(e.shape.container)]
     children = [{
         "name": support.name_of(child),
         "specs": [{"to": support.name_of([x.shape for x in e.adjacency.to_shape][0]),

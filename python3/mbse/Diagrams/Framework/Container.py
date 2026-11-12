@@ -25,10 +25,11 @@ extents changed. A grid is a sequence of cells, placed in order, by its settings
 along a row, `span` cells, then the next row down, where it grows rows; down a column, then the next column right, where
 it grows columns. `configured(grid)` takes a grid's settings, after a mutation that made the grid or changed them,
 rearranging its cells where its span or axis changed; `defaulted(diagram)` configures each grid whose settings the
-diagram's changed defaults changed; `added(child)` places a child a grid has just gained in the next
-cell, taking the grid's settings first where it is new; `removing(child)` closes the gap a child about to leave its
-grid leaves; `adjoined(spec)` takes an adjacency spec just added as its grid's last rule; `unjoining(spec)` drops the
-rule of a spec about to be removed, reverting its `to_shape` to its original insertion position where the rule held.
+diagram's changed defaults changed; `added(child)` places a child a grid has just gained, a container's or the
+diagram's, in the next cell, taking the grid's settings first where it is new; `removing(child)` closes the gap a child
+about to leave its grid leaves; `adjoined(spec)` takes an adjacency spec just added as its grid's last rule;
+`unjoining(spec)` drops the rule of a spec about to be removed, reverting its `to_shape` to its original insertion
+position where the rule held.
 
 After each mutation the grid settles. It held every rule but the ignored before the mutation, so only the rules the
 mutation touched, a new one and the ignored are checked, in the order they reached the grid: each kept where it holds;
@@ -271,9 +272,10 @@ def _from_shape(spec: Any) -> Any:
 
 def _holder(child: Any) -> Any:
     """The grid that holds `child`."""
-    for entry in child.container:
-        return entry.grid
-    raise ValueError("a shape no grid holds is in no container: it has no cell")
+    grid = Logical.holding(child)
+    if grid is None:
+        raise ValueError("a shape no grid holds has no cell: its container, or its diagram, has no grid")
+    return grid
 
 
 def _ready(grid: Any) -> list[dict[str, Any]]:

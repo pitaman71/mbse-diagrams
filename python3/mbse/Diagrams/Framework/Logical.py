@@ -13,9 +13,10 @@ own, which owns nothing:
   contained or not: containment is not membership;
 - a container, a shape or the diagram, owns at most one grid, a `Logical.OfGrid`, as `grid`, which holds its children,
   each in one grid (`Logical.Containment`), in the order it was added: containment is a path through ownership, so that
-  a child can be contained only by a grid, and a container has only one. The diagram's grid holds its top-level shapes;
-  a shape no grid holds is in no container at all. Moving a shape from one grid to another changes this entry alone, so
-  that the shape keeps its identity and what it owns. A grid's settings are its own properties: `span`, the cells it
+  a child can be contained only by a grid, and a container has only one. The diagram's grid holds every member of the
+  diagram that no shape's grid holds, its top-level shapes, with no entry of its own: removing a shape's containment
+  entry moves it to the top level, deleting nothing. Moving a shape into or out of a container changes this entry
+  alone, so that the shape keeps its identity and what it owns. A grid's settings are its own properties: `span`, the cells it
   holds along the axis it does not grow along, a positive int; `grows`, that axis, `"rows"` or `"columns"`; and
   `cell_rotation`, a `Logical.OfRotation`, its cells' turn from its container's compass. Where a grid sets none, or
   one outside those values, its diagram's `grid_span` and `grid_grows` apply, then 3 and `"rows"`
@@ -40,7 +41,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["install", "owner_of", "name_of", "grid_of", "container_of", "settings", "ends", "compass"]
+__all__ = ["install", "owner_of", "name_of", "grid_of", "container_of", "holding", "settings", "ends", "compass"]
 
 SPAN, GROWS = 3, "rows"  # a grid's, where neither it nor its diagram sets one
 AXES = ("rows", "columns")
@@ -181,9 +182,22 @@ def grid_of(container: Any) -> Any:
 
 
 def container_of(shape: Any) -> Any:
-    """The container a shape is in: the shape or the diagram whose grid holds it, or `None` where no grid does."""
+    """The container a shape is in: the shape whose grid holds it, or the diagram, for a top-level shape; `None` for a
+    shape that is no diagram's member."""
     for entry in shape.container:
         return owner_of(entry.grid)
+    for entry in shape.diagram:
+        return entry.diagram
+    return None
+
+
+def holding(shape: Any) -> Any:
+    """The grid that holds a shape: its container's, or the diagram's, for a top-level shape; `None` where that diagram
+    has no grid yet, or the shape is no diagram's member."""
+    for entry in shape.container:
+        return entry.grid
+    for entry in shape.diagram:
+        return grid_of(entry.diagram)
     return None
 
 
@@ -233,11 +247,13 @@ def _enclosing(shape: Any) -> float:
     the grid that holds it, and so on to the diagram, whose compass is north."""
     turn = 0.0
     while True:
-        grids = [e.grid for e in shape.container]
-        if not grids:
+        grid = holding(shape)
+        if grid is None:
             return turn % 360.0
-        turn += grids[0].cell_rotation.degrees.get() or 0.0
-        shape = owner_of(grids[0])
+        turn += grid.cell_rotation.degrees.get() or 0.0
+        shape = owner_of(grid)
+        if shape.as_schema().name == "Logical.OfDiagram":
+            return turn % 360.0
 
 
 def _origin(shape: Any) -> Any:

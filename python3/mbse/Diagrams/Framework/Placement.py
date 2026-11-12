@@ -85,7 +85,7 @@ def unit_length(x: Any) -> float:
     """`x`'s unit length: the diagram's, or a shape's, its container's times the scaling factor."""
     if _is_diagram(x):
         return _tuning(x)["unit"]
-    return unit_length(_container_of(x)) * _tuning(_diagram_of(x))["scaling"]
+    return unit_length(Logical.container_of(x)) * _tuning(_diagram_of(x))["scaling"]
 
 
 class Layout:
@@ -164,12 +164,12 @@ class Layout:
             at = Logical.owner_of(at)
         self._dirty[self._element(at)] = None
         if _is_shape(at):
-            self._dirty[self._element(_container_of(at))] = None  # where it is held
+            self._dirty[self._element(Logical.container_of(at))] = None  # where it is held
 
     def _element(self, x: Any) -> _Element:
         e = self._elements.get(x)
         if e is None:
-            depth = 0 if _is_diagram(x) else self._element(_container_of(x)).depth + 1
+            depth = 0 if _is_diagram(x) else self._element(Logical.container_of(x)).depth + 1
             e = _Element(x, f"e{self._made}.{Logical.name_of(x)}", depth, unit_length(x))
             self._made += 1
             self._elements[x] = e
@@ -434,10 +434,6 @@ def _grid_of(container: Any) -> Any:
     return Logical.grid_of(container)
 
 
-def _container_of(shape: Any) -> Any:
-    """The container a shape is in; the diagram's top level for one no grid holds."""
-    container = Logical.container_of(shape)
-    return _diagram_of(shape) if container is None else container
 
 
 def _cells_of(grid: Any) -> list[tuple[Any, int, int, list[Any]]]:

@@ -1,36 +1,36 @@
 /**
- * The container layout of a diagram: the grid of cells each container's children are placed in, with no coordinates
- * of any kind
+ * The container layout of a diagram: the cells of each container's grid its children are placed in, with no
+ * coordinates of any kind
  * ([CAP-238: container schemas and grid insertion](mbse:mbse-basis/docs/capabilities/CAP-238.md),
  * [CAP-239: grid adjacency](mbse:mbse-basis/docs/capabilities/CAP-239.md),
  * [CAP-240: conflicting layout rules ignored and requeued](mbse:mbse-basis/docs/capabilities/CAP-240.md)).
  *
- * Normal schemas, installed after `Logical`'s: `store.transaction(Container.install)`. Each is owned through
- * `Logical.Owns`. Every shape with children, and the diagram, has an implied container: a `Container.OfGrid`, owned by
- * it as `grid` (`Container.Layout`), made when it gains its first child, its `span` and `grows` the diagram's
- * `grid_span` and `grid_grows`, 3 and `"rows"` unless set, or given before, by `layout`. A grid grows along one axis,
- * `grows`, `"rows"` or `"columns"`, and holds `span` cells along the other; its extents, `rows` and `columns`, count
- * the cells along each axis its children occupy; `inserted` counts the children it has placed, and `ruled` the rules it
- * has taken. A `Container.OfCell` is owned by its grid, named for its `row` and `column`, `"0,1"`, each counted from 0
- * (`Container.Cells`), and holds its children in order (`Container.Holds`), each with its `order`, its original
- * insertion position: a shape is in one cell. A cell is itself a container, oriented as its grid's container is, turned
- * by the grid's `cell_rotation`, a `Logical.OfRotation`: the compass of each shape it holds is its container's, turned
- * so. A cell that holds several grows along its grid's axis, its extents the cells its shapes occupy. A
- * `Container.OfRule` is a rule of its grid, owned by it, in the order it reached it (`Container.Rules`), enforcing one
- * adjacency spec (`Container.Enforces`), and `ignored` where the grid cannot meet it.
+ * Normal schemas, installed after `Logical`'s: `store.transaction(Container.install)`. A container's grid, a
+ * `Logical.OfGrid`, and the children it holds are the logical layout's, written by mutations
+ * ([CAP-280: the grid in the logical layout](mbse:mbse-basis/docs/capabilities/README.md#CAP-280)); the container
+ * layout derives the rest, and adds it to the grid. A `Container.OfCell` is owned by its grid through
+ * `Container.HasCells`, keyed by its `row` and `column`, each counted from 0, which it holds too, and holds its children
+ * in order (`Container.Holds`), each with its `order`, its original insertion position: a shape is in one cell. A cell
+ * is itself a container, oriented as its grid's container is, turned by the grid's `cell_rotation`. A cell that holds
+ * several grows along its grid's axis, its extents the cells its shapes occupy. The grid's extents, `rows` and
+ * `columns`, count the cells along each axis its children occupy; `inserted` counts the children it has placed, and
+ * `ruled` the rules it has taken; `arranged_span` and `arranged_grows` are the settings its cells are arranged by. A
+ * `Container.OfRule` is a rule of its grid, owned by it through `Logical.Owns`, in the order it reached it
+ * (`Container.Rules`), enforcing one adjacency spec (`Container.Enforces`), and `ignored` where the grid cannot meet it.
  *
  * The layout is incremental: it follows the logical layout's mutations, one at a time, and leaves alone what a mutation
  * does not touch. Each function adjusts it to one mutation, in a transaction of its own, after the mutation, or before
  * it for a removal, which it anticipates while what is removed still exists; and each returns its adjustments, in
- * order, as data: a grid made, a shape placed, moved or leaving its cell, a rule held, met, ignored or dropped, the
- * extents changed, the cells turned. A grid is a sequence of cells, placed in order: along a row, `span` cells, then
- * the next row down, where it grows rows; down a column, then the next column right, where it grows columns.
- * `layout(container, span, grows, cell_rotation)` gives a container its grid before its children; `rotate(container,
- * degrees)` turns its cells; `added(child)` places a child its container has just gained in the next cell, or a shape
- * the diagram's top level has just gained, one made there or one that left its container; `removing(child)` closes the
- * gap a child about to leave its container leaves, or a top-level shape about to move into a container;
- * `adjoined(spec)` takes an adjacency spec just added as its grid's last rule; `unjoining(spec)` drops the rule of a spec about to be removed, reverting its
- * `to_shape` to its original insertion position where the rule held.
+ * order, as data: a grid's settings taken, a shape placed, moved or leaving its cell, a rule held, met, ignored or
+ * dropped, the extents changed. A grid is a sequence of cells, placed in order, by its settings as `Logical.settings`
+ * gives them: along a row, `span` cells, then the next row down, where it grows rows; down a column, then the next
+ * column right, where it grows columns. `configured(grid)` takes a grid's settings, after a mutation that made the grid
+ * or changed them, rearranging its cells where its span or axis changed; `defaulted(diagram)` configures each grid
+ * whose settings the diagram's changed defaults changed; `added(child)` places a child a grid has just gained, a
+ * container's or the diagram's, in the next cell, taking the grid's settings first where it is new; `removing(child)` closes the gap a child about to leave
+ * its grid leaves; `adjoined(spec)` takes an adjacency spec just added as its grid's last rule; `unjoining(spec)` drops
+ * the rule of a spec about to be removed, reverting its `to_shape` to its original insertion position where the rule
+ * held.
  *
  * After each mutation the grid settles. It held every rule but the ignored before the mutation, so only the rules the
  * mutation touched, a new one and the ignored are checked, in the order they reached the grid: each kept where it
@@ -38,7 +38,8 @@
  * moving its `to_shape` beside its `from_shape` along its rotation, quantized to the nearest quarter turn, into a cell
  * of its own or into the cell on that side a rule along the same side placed, which they then share; and where no such
  * change can, ignored, the later of the incompatible rules, until a mutation lets it be met, in its turn. The shapes a
- * change moves are touched in turn, for the rules after it.
+ * change moves are touched in turn, for the rules after it. A grid rearranged by new settings touches every shape it
+ * holds.
  */
 
 import { Errors, Proxies } from "@mbse/schemas/Framework";
@@ -47,7 +48,6 @@ import * as Logical from "./Logical.js";
 
 const { ValueError } = Errors;
 
-const AXES = ["rows", "columns"];
 const QUARTERS = ["north", "east", "south", "west"];
 const STEPS: Record<string, string> = {
   "rows,east": "next", "rows,west": "prev", "rows,south": "down", "rows,north": "up",
@@ -56,9 +56,6 @@ const STEPS: Record<string, string> = {
 const OFFSETS: Record<string, [bigint, bigint]> = {
   north: [-1n, 0n], east: [0n, 1n], south: [1n, 0n], west: [0n, -1n],
 };
-/** An implied container's span and axis, where its diagram sets none. */
-export const SPAN = 3n;
-export const GROWS = "rows";
 
 /** An adjustment of the container layout, as data: what one change did, its shapes the objects themselves. */
 export type Adjustment = Record<string, any>;
@@ -70,37 +67,17 @@ export function install(txn: any): any {
   const owned = (t: any, _: any): any => t.name("owner").relation([_.Owns]).me("owned").owner(true);
   return txn.uid("mbse.Diagrams.Container/1").mutations([(mu: any) => mu.upsert((u: any) => u.exists([(p: any) => p
     .symbols({
-      Owns: S.OfRelation, OfRotation: S.OfObject, OfDiagram: S.OfObject, OfShape: S.OfObject,
-      OfAdjacency: S.OfObject, OfGrid: S.OfObject, Layout: S.OfRelation, OfCell: S.OfObject,
-      Cells: S.OfRelation, Holds: S.OfRelation, OfRule: S.OfObject, Rules: S.OfRelation,
-      Enforces: S.OfRelation,
+      Owns: S.OfRelation, OfShape: S.OfObject, OfAdjacency: S.OfObject, OfGrid: S.OfObject,
+      OfCell: S.OfObject, HasCells: S.OfRelation, Holds: S.OfRelation, OfRule: S.OfObject,
+      Rules: S.OfRelation, Enforces: S.OfRelation,
     })
     .spec([
       (_: any) => _.Owns.name("Logical.Owns"), // found by their names
-      (_: any) => _.OfRotation.name("Logical.OfRotation"),
-      (_: any) => _.Layout.name("Container.Layout").links([
-        (t: any) => t.name("container"),
-        (t: any) => t.name("grid"),
-      ]).uniques([["container"], ["grid"]]), // one grid per container
-      (_: any) => _.OfGrid.name("Container.OfGrid").ref(true).properties({
-        grows: S.OfStr, // the elastic axis: "rows" or "columns"
-        span: S.OfInt, // the cells along the other axis
-        rows: S.OfInt, // the extents: the cells along each axis the children occupy
-        columns: S.OfInt,
-        inserted: S.OfInt, // the children placed so far: the next one's order
-        ruled: S.OfInt, // the rules taken so far: the next one's name
-        cell_rotation: _.OfRotation, // each cell's, from the container's compass
-      }).adjacencies([
-        (t: any) => owned(t, _),
-        (t: any) => t.name("owns").relation([_.Owns]).me("owner"), // its cells and rules
-        (t: any) => t.name("container").relation([_.Layout]).me("grid"),
-        (t: any) => t.name("cells").relation([_.Cells]).me("grid"),
-        (t: any) => t.name("rules").relation([_.Rules]).me("grid"),
-      ]),
-      (_: any) => _.Cells.name("Container.Cells").links([
+      (_: any) => _.HasCells.name("Container.HasCells").links([
         (t: any) => t.name("grid"),
         (t: any) => t.name("cell"),
-      ]).uniques([["grid"]]), // a cell of one grid
+      ]).properties({ row: S.OfInt, column: S.OfInt })
+        .uniques([["grid", "row", "column"], ["cell"]]), // a cell of one grid, one cell at each coordinate
       (_: any) => _.OfCell.name("Container.OfCell").ref(true).properties({
         row: S.OfInt,
         column: S.OfInt,
@@ -108,8 +85,7 @@ export function install(txn: any): any {
         rows: S.OfInt,
         columns: S.OfInt,
       }).adjacencies([
-        (t: any) => owned(t, _),
-        (t: any) => t.name("grid").relation([_.Cells]).me("cell"),
+        (t: any) => t.name("grid").relation([_.HasCells]).me("cell").owner(true),
         (t: any) => t.name("children").relation([_.Holds]).me("cell"),
       ]),
       (_: any) => _.Holds.name("Container.Holds").links([
@@ -129,12 +105,18 @@ export function install(txn: any): any {
         (t: any) => t.name("grid").relation([_.Rules]).me("rule"),
         (t: any) => t.name("spec").relation([_.Enforces]).me("rule"),
       ]),
-      (_: any) => _.OfDiagram.name("Logical.OfDiagram").properties({
-        grid_span: S.OfInt, // an implied container's span and axis, where layout gives none
-        grid_grows: S.OfStr,
-      }).adjacencies([(t: any) => t.name("grid").relation([_.Layout]).me("container")]),
+      (_: any) => _.OfGrid.name("Logical.OfGrid").properties({
+        rows: S.OfInt, // the extents: the cells along each axis the children occupy
+        columns: S.OfInt,
+        inserted: S.OfInt, // the children placed so far: the next one's order
+        ruled: S.OfInt, // the rules taken so far: the next one's name
+        arranged_span: S.OfInt, // the settings its cells are arranged by
+        arranged_grows: S.OfStr,
+      }).adjacencies([
+        (t: any) => t.name("cells").relation([_.HasCells]).me("grid"),
+        (t: any) => t.name("rules").relation([_.Rules]).me("grid"),
+      ]),
       (_: any) => _.OfShape.name("Logical.OfShape").adjacencies([
-        (t: any) => t.name("grid").relation([_.Layout]).me("container"),
         (t: any) => t.name("cell").relation([_.Holds]).me("shape"),
       ]),
       (_: any) => _.OfAdjacency.name("Logical.OfAdjacency").adjacencies([
@@ -143,56 +125,57 @@ export function install(txn: any): any {
     ])]))]);
 }
 
-/** Gives `container`, a shape or the diagram, which has no children yet, a grid of `span` cells along the axis it does
- * not grow along, `grows`, each cell turned by `cell_rotation` degrees from the container's compass, in place of the
- * implied one its first child would give it. Returns the adjustment: the grid made. Within a transaction. */
-export function layout(container: any, span: bigint, grows = "rows", cell_rotation = 0): Adjustment[] {
-  if (!AXES.includes(grows)) throw new ValueError(`a grid grows rows or columns, not ${repr(grows)}`);
-  if (typeof span !== "bigint" || span < 1n) throw new ValueError(`a grid's span is a positive int, not ${repr(span)}`);
-  if ([...container.grid].length > 0) throw new ValueError("a container has one grid");
-  if (childrenOf(container).length > 0) {
-    throw new ValueError("a container's grid comes before its children, which reach it as mutations");
+/** Takes `grid`'s settings, after a mutation that made it or changed them: where its span or axis changed, its cells
+ * are rearranged by them, in the same order, and settle. Returns the adjustments, in order: the settings taken first.
+ * Within a transaction of its own, after the mutation. */
+export function configured(grid: any): Adjustment[] {
+  const ready = readied(grid);
+  if (ready.length > 0) return ready;
+  const [span, grows] = Logical.settings(grid);
+  const adjustments = [taken(grid)];
+  const was: [bigint, string] = [grid.arranged_span.get(), grid.arranged_grows.get()];
+  if (was[0] === span && was[1] === grows) return adjustments;
+  const sequence = sequenceOf(grid);
+  const made = moves(sequence, sequence, span, grows, was);
+  const touched = new Set(sequence.flatMap((c) => c.held.map(([s]) => s)));
+  return settle(grid, sequence, rulesOf(grid), touched, [...adjustments, ...made]);
+}
+
+/** Configures each grid of `diagram` whose span or axis changed with the diagram's defaults, after a mutation that
+ * changed them: the diagram's grid, then each of its shapes', in the order they joined it. Returns the adjustments, in
+ * order. Within a transaction of its own, after the mutation. */
+export function defaulted(diagram: any): Adjustment[] {
+  const adjustments: Adjustment[] = [];
+  const grids = [Logical.grid_of(diagram), ...[...diagram.shapes].map((e: any) => Logical.grid_of(e.shape))];
+  for (const grid of grids) {
+    if (grid === null || grid.inserted.get() === null) continue;
+    const [span, grows] = Logical.settings(grid);
+    if (span !== grid.arranged_span.get() || grows !== grid.arranged_grows.get()) adjustments.push(...configured(grid));
   }
-  return make(container, span, grows, cell_rotation);
+  return adjustments;
 }
 
-/** Turns the cells of `container`'s grid by `degrees` from its compass, and with them the compasses of the shapes they
- * hold. Returns the adjustment. Within a transaction. */
-export function rotate(container: any, degrees: number): Adjustment[] {
-  const grid = gridOf(container);
-  (Proxies.store_of(grid) as any).Container.OfGrid(grid, (g: any) => g.cell_rotation((r: any) => r.degrees(degrees)));
-  return [{ kind: "rotate", degrees }];
-}
-
-/** Places `child`, which its container has just gained, in the next cell of its container's grid, making the implied
- * grid where the container has none yet, then settles. Returns the adjustments, in order. Within a transaction of its
- * own, after the mutation. */
+/** Places `child`, which a grid has just gained, in the grid's next cell, taking the grid's settings first where it is
+ * new, then settles. Returns the adjustments, in order. Within a transaction of its own, after the mutation. */
 export function added(child: any): Adjustment[] {
   if ([...child.cell].length > 0) throw new ValueError("a child is placed once: it is in a cell already");
-  const container = container_of(child);
-  const adjustments: Adjustment[] = [];
-  if ([...container.grid].length === 0) {
-    const diagram = diagramOf(container);
-    const span: bigint | null = diagram.grid_span.get();
-    const grows: string | null = diagram.grid_grows.get();
-    adjustments.push(...make(container, span ?? SPAN, grows ?? GROWS, 0));
-  }
-  const grid = gridOf(container);
+  const grid = holder(child);
+  const adjustments = readied(grid);
+  const [span, grows] = Logical.settings(grid);
   const order: bigint = grid.inserted.get();
-  (Proxies.store_of(grid) as any).Container.OfGrid(grid, (g: any) => g.inserted(order + 1n));
+  (Proxies.store_of(grid) as any).Logical.OfGrid(grid, (g: any) => g.inserted(order + 1n));
   const before = sequenceOf(grid);
-  adjustments.push({ kind: "place", shape: child, order,
-    to: position(BigInt(before.length), grid.span.get(), grid.grows.get()) });
+  adjustments.push({ kind: "place", shape: child, order, to: position(BigInt(before.length), span, grows) });
   return settle(grid, [...before, cell([[child, order]])], rulesOf(grid), new Set([child]), adjustments);
 }
 
-/** Anticipates `child` leaving its container, or the diagram's top level, before the mutation that moves it, which
- * removes the specs from and to it: it leaves its cell, the children after it move back one, a cell it leaves empty
- * goes, and its rules are dropped; then settles. The mutation deletes nothing: `added` then places it where it went.
- * Returns the adjustments, in order. Within a transaction of its own, before the move. */
+/** Anticipates `child` leaving its grid, before the mutation that moves it, which removes the specs from and to it: it
+ * leaves its cell, the children after it move back one, a cell it leaves empty goes, and its rules are dropped; then
+ * settles. The mutation deletes nothing: `added` then places it where it went. Returns the adjustments, in order.
+ * Within a transaction of its own, before the removal. */
 export function removing(child: any): Adjustment[] {
-  const grid = gridOf(container_of(child));
-  const [span, grows]: [bigint, string] = [grid.span.get(), grid.grows.get()];
+  const grid = holder(child);
+  const [span, grows] = Logical.settings(grid);
   const before = sequenceOf(grid);
   const i = before.findIndex((c) => c.held.some(([s]) => s === child));
   const [after] = without(before, child);
@@ -215,7 +198,7 @@ export function removing(child: any): Adjustment[] {
 export function adjoined(spec: any): Adjustment[] {
   const added = rule(null, spec, false);
   added.new = true;
-  const grid = gridOf(container_of(added.from_shape));
+  const grid = holder(added.from_shape);
   return settle(grid, sequenceOf(grid), [...rulesOf(grid), added], new Set(), []);
 }
 
@@ -224,7 +207,7 @@ export function adjoined(spec: any): Adjustment[] {
  * shape was placed after it; then settles. Returns the adjustments, in order. Within a transaction of its own, before
  * the removal. */
 export function unjoining(spec: any): Adjustment[] {
-  const grid = gridOf(container_of(fromShapeOf(spec)));
+  const grid = holder(fromShapeOf(spec));
   const rules = rulesOf(grid);
   const dropped = rules.find((r) => r.spec === spec) as Rule;
   dropped.dropped = true;
@@ -237,27 +220,22 @@ export function unjoining(spec: any): Adjustment[] {
     rest.splice(found < 0 ? rest.length : found, 0, cell([held]));
     sequence = rest;
   }
-  const moved = moves(before, sequence, grid.span.get(), grid.grows.get());
+  const moved = moves(before, sequence, ...Logical.settings(grid));
   return settle(grid, sequence, rules, new Set(moved.map((m) => m.shape)), [...adjustments, ...moved]);
 }
 
 /** The rules of `container`'s grid that are ignored, in the order they reached it: each one's `from_shape`,
  * `to_shape` and degrees. */
 export function ignored(container: any): [any, any, number][] {
-  return rulesOf(gridOf(container)).filter((r) => r.ignored).map((r) => [r.from_shape, r.to_shape, r.degrees]);
+  const grid = Logical.grid_of(container);
+  if (grid === null) return [];
+  return rulesOf(grid).filter((r) => r.ignored).map((r) => [r.from_shape, r.to_shape, r.degrees]);
 }
 
 /** The row and column of the cell that holds `shape`, or `null` where none does. */
 export function cell_of(shape: any): [bigint, bigint] | null {
   for (const entry of shape.cell) return [entry.cell.row.get(), entry.cell.column.get()];
   return null;
-}
-
-/** The container a shape is in: the shape that contains it, or, for a top-level shape, its diagram. */
-export function container_of(child: any): any {
-  for (const entry of child.container) return entry.container;
-  const [entry] = [...child.diagram];
-  return entry.diagram;
 }
 
 /** The quarter turn nearest `degrees`, clockwise from north: `"north"`, `"east"`, `"south"` or `"west"`; half way
@@ -305,43 +283,32 @@ function fromShapeOf(spec: any): any {
   return [...spec.from_shape][0].shape;
 }
 
-function repr(value: unknown): string {
-  return typeof value === "string" ? `'${value}'` : String(value);
+/** The grid that holds `child`. */
+function holder(child: any): any {
+  const grid = Logical.holding(child);
+  if (grid === null) throw new ValueError("a shape no grid holds has no cell: its container, or its diagram, has no grid");
+  return grid;
 }
 
-/** A shape's children; or the diagram's top-level shapes, its members with no container. */
-function childrenOf(container: any): any[] {
-  if (container.as_schema().adjacencies.has("children")) return [...container.children].map((e: any) => e.child);
-  return [...container.shapes].map((e: any) => e.shape).filter((s: any) => [...s.container].length === 0);
+/** Takes a new grid's settings, its cells none: the adjustment; none for a grid that has them. */
+function readied(grid: any): Adjustment[] {
+  if (grid.inserted.get() !== null) return [];
+  const [span, grows] = Logical.settings(grid);
+  (Proxies.store_of(grid) as any).Logical.OfGrid(grid, (g: any) => g
+    .rows(0n).columns(0n).inserted(0n).ruled(0n).arranged_span(span).arranged_grows(grows));
+  return [taken(grid)];
 }
 
-/** The diagram `container` is in, or is. */
-function diagramOf(container: any): any {
-  while (container.as_schema().name !== "Logical.OfDiagram") container = Logical.owner_of(container);
-  return container;
+/** The adjustment that takes a grid's settings. */
+function taken(grid: any): Adjustment {
+  const [span, grows] = Logical.settings(grid);
+  return { kind: "grid", container: Logical.owner_of(grid), span, grows,
+    cell_rotation: grid.cell_rotation.degrees.get() ?? 0 };
 }
 
-/** Makes `container`'s grid: the adjustment. */
-function make(container: any, span: bigint, grows: string, cell_rotation: number): Adjustment[] {
-  (Proxies.store_of(container) as any).Container.OfGrid((g: any) => g
-    .owner((a: any) => a.insert((e: any) => e.name("grid").owner(container)))
-    .container((a: any) => a.insert((e: any) => e.container(container)))
-    .grows(grows).span(span).rows(0n).columns(0n).inserted(0n).ruled(0n)
-    .cell_rotation((r: any) => r.degrees(cell_rotation)));
-  return [{ kind: "grid", container, span, grows, cell_rotation }];
-}
-
-function gridOf(container: any): any {
-  const entries = [...container.grid];
-  if (entries.length === 0) {
-    throw new ValueError("a container without a grid has no container layout: it has no children yet");
-  }
-  return entries[0].grid;
-}
-
-/** The grid's cells, in the order they are placed. */
+/** The grid's cells, in the order they are placed, by the settings they are arranged by. */
 function sequenceOf(grid: any): Cell[] {
-  const [span, grows] = [grid.span.get(), grid.grows.get()];
+  const [span, grows] = [grid.arranged_span.get(), grid.arranged_grows.get()];
   const keyed = new Map([...grid.cells].map((e: any) => [`${e.cell.row.get()},${e.cell.column.get()}`, e.cell]));
   return [...Array(keyed.size).keys()].map((i) => {
     const c = keyed.get(position(BigInt(i), span, grows).join());
@@ -421,7 +388,7 @@ function meet(sequence: Cell[], r: Rule, kept: Rule[], span: bigint, grows: stri
  * sequence, the rules and the extents. */
 function settle(grid: any, sequence: Cell[], rules: Rule[], touched: Set<any>,
   adjustments: Adjustment[]): Adjustment[] {
-  const [span, grows]: [bigint, string] = [grid.span.get(), grid.grows.get()];
+  const [span, grows] = Logical.settings(grid);
   const extents = [grid.rows.get(), grid.columns.get()];
   const kept: Rule[] = [];
   for (const r of rules) {
@@ -457,11 +424,12 @@ function settle(grid: any, sequence: Cell[], rules: Rule[], touched: Set<any>,
   return adjustments;
 }
 
-/** The moves that take the shapes of `before` to their cells in `after`, in the order of `after`: each shape in both
- * whose cell changed. */
-function moves(before: Cell[], after: Cell[], span: bigint, grows: string): Adjustment[] {
+/** The moves that take the shapes of `before`, arranged by `arranged` or else by `span` and `grows`, to their cells in
+ * `after`, in the order of `after`: each shape in both whose cell changed. */
+function moves(before: Cell[], after: Cell[], span: bigint, grows: string,
+  arranged: [bigint, string] = [span, grows]): Adjustment[] {
   const was = new Map(before.flatMap((c, i) => c.held.map(([s]): [any, [bigint, bigint]] =>
-    [s, position(BigInt(i), span, grows)])));
+    [s, position(BigInt(i), ...arranged)])));
   return after.flatMap((c, i) => c.held.flatMap(([s]) => {
     const from = was.get(s);
     const to = position(BigInt(i), span, grows);
@@ -483,7 +451,7 @@ function record(grid: any, rules: Rule[]): void {
         .owner((a: any) => a.clear()));
     } else if (r.rule === null) {
       const name = `${grid.ruled.get()}`;
-      store.Container.OfGrid(grid, (g: any) => g.ruled(grid.ruled.get() + 1n));
+      store.Logical.OfGrid(grid, (g: any) => g.ruled(grid.ruled.get() + 1n));
       store.Container.OfRule((x: any) => x
         .owner((a: any) => a.insert((e: any) => e.name(name).owner(grid)))
         .grid((a: any) => a.insert((e: any) => e.grid(grid)))
@@ -495,13 +463,16 @@ function record(grid: any, rules: Rule[]): void {
   }
 }
 
-/** Makes the grid hold `sequence`, writing only the cells that change, and its extents those of the sequence. */
+/** Makes the grid hold `sequence`, by its settings, writing only the cells that change, and its extents those of the
+ * sequence; a cell no longer at a place the sequence fills goes. */
 function arrange(grid: any, sequence: Cell[]): void {
   const store: any = Proxies.store_of(grid);
-  const [span, grows]: [bigint, string] = [grid.span.get(), grid.grows.get()];
+  const [span, grows] = Logical.settings(grid);
   const keyed = new Map([...grid.cells].map((e: any) => [`${e.cell.row.get()},${e.cell.column.get()}`, e.cell]));
+  const filled = new Set<string>();
   sequence.forEach((c, index) => {
     const [row, column] = position(BigInt(index), span, grows);
+    filled.add(`${row},${column}`);
     const axis = c.held.length > 1 ? c.grows : null;
     const count = BigInt(c.held.length);
     const [rows, columns] = axis === "rows" ? [count, 1n] : [1n, count];
@@ -521,20 +492,19 @@ function arrange(grid: any, sequence: Cell[]): void {
     }).grows(axis).rows(rows).columns(columns);
     if (existing === undefined) {
       store.Container.OfCell((x: any) => fill(x
-        .owner((a: any) => a.insert((e: any) => e.name(`${row},${column}`).owner(grid)))
-        .grid((a: any) => a.insert((e: any) => e.grid(grid)))
+        .grid((a: any) => a.insert((e: any) => e.grid(grid).row(row).column(column)))
         .row(row).column(column)));
     } else {
       store.Container.OfCell(existing, fill);
     }
   });
-  for (let index = sequence.length; index < keyed.size; index++) {
-    const gone = keyed.get(position(BigInt(index), span, grows).join()); // its own entries cleared first
-    store.Container.OfCell(gone, (x: any) => x.children((a: any) => a.clear()).grid((a: any) => a.clear())
-      .owner((a: any) => a.clear()));
+  for (const [place, gone] of keyed) { // its own entries cleared first: it goes only when the transaction ends
+    if (!filled.has(place)) {
+      store.Container.OfCell(gone, (x: any) => x.children((a: any) => a.clear()).grid((a: any) => a.clear()));
+    }
   }
   const count = BigInt(sequence.length);
   const [along, across] = [(count + span - 1n) / span, count < span ? count : span];
   const [rows, columns] = grows === "rows" ? [along, across] : [across, along];
-  store.Container.OfGrid(grid, (g: any) => g.rows(rows).columns(columns));
+  store.Logical.OfGrid(grid, (g: any) => g.rows(rows).columns(columns).arranged_span(span).arranged_grows(grows));
 }

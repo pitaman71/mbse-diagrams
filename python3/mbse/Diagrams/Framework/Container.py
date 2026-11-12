@@ -1,33 +1,33 @@
-"""The container layout of a diagram: the grid of cells each container's children are placed in, with no coordinates
-of any kind
+"""The container layout of a diagram: the cells of each container's grid its children are placed in, with no
+coordinates of any kind
 ([CAP-238: container schemas and grid insertion](mbse:mbse-basis/docs/capabilities/CAP-238.md),
 [CAP-239: grid adjacency](mbse:mbse-basis/docs/capabilities/CAP-239.md),
 [CAP-240: conflicting layout rules ignored and requeued](mbse:mbse-basis/docs/capabilities/CAP-240.md)).
 
-Normal schemas, installed after `Logical`'s: `store.transaction(Container.install)`. Each is owned through
-`Logical.Owns`. Every shape with children, and the diagram, has an implied container: a `Container.OfGrid`, owned by it
-as `grid` (`Container.Layout`), made when it gains its first child, its `span` and `grows` the diagram's `grid_span`
-and `grid_grows`, 3 and `"rows"` unless set, or given before, by `layout`. A grid grows along one axis, `grows`,
-`"rows"` or `"columns"`, and holds `span` cells along the other; its extents, `rows` and `columns`, count the cells
-along each axis its children occupy; `inserted` counts the children it has placed, and `ruled` the rules it has taken.
-A `Container.OfCell` is owned by its grid, named for its `row` and `column`, `"0,1"`, each counted from 0
-(`Container.Cells`), and holds its children in order (`Container.Holds`), each with its `order`, its original insertion
-position: a shape is in one cell. A cell is itself a container, oriented as its grid's container is, turned by the
-grid's `cell_rotation`, a `Logical.OfRotation`: the compass of each shape it holds is its container's, turned so. A
-cell that holds several grows along its grid's axis, its extents the cells its shapes occupy. A `Container.OfRule` is
-a rule of its grid, owned by it, in the order it reached it (`Container.Rules`), enforcing one adjacency spec
-(`Container.Enforces`), and `ignored` where the grid cannot meet it.
+Normal schemas, installed after `Logical`'s: `store.transaction(Container.install)`. A container's grid, a
+`Logical.OfGrid`, and the children it holds are the logical layout's, written by mutations
+([CAP-280: the grid in the logical layout](mbse:mbse-basis/docs/capabilities/README.md#CAP-280)); the container layout
+derives the rest, and adds it to the grid. A `Container.OfCell` is owned by its grid through `Container.HasCells`,
+keyed by its `row` and `column`, each counted from 0, which it holds too, and holds its children in order
+(`Container.Holds`), each with its `order`, its original insertion position: a shape is in one cell. A cell is itself a
+container, oriented as its grid's container is, turned by the grid's `cell_rotation`. A cell that holds several grows
+along its grid's axis, its extents the cells its shapes occupy. The grid's extents, `rows` and `columns`, count the
+cells along each axis its children occupy; `inserted` counts the children it has placed, and `ruled` the rules it has
+taken; `arranged_span` and `arranged_grows` are the settings its cells are arranged by. A `Container.OfRule` is a rule
+of its grid, owned by it through `Logical.Owns`, in the order it reached it (`Container.Rules`), enforcing one adjacency
+spec (`Container.Enforces`), and `ignored` where the grid cannot meet it.
 
 The layout is incremental: it follows the logical layout's mutations, one at a time, and leaves alone what a mutation
 does not touch. Each function adjusts it to one mutation, in a transaction of its own, after the mutation, or before it
 for a removal, which it anticipates while what is removed still exists; and each returns its adjustments, in order, as
-data: a grid made, a shape placed, moved or leaving its cell, a rule held, met, ignored or dropped, the extents changed,
-the cells turned. A grid is a sequence of cells, placed in order: along a row, `span` cells, then the next row down,
-where it grows rows; down a column, then the next column right, where it grows columns. `layout(container, span,
-grows, cell_rotation)` gives a container its grid before its children; `rotate(container, degrees)` turns its cells;
-`added(child)` places a child its container has just gained in the next cell, or a shape the diagram's top level has
-just gained, one made there or one that left its container; `removing(child)` closes the gap a child about to leave
-its container leaves, or a top-level shape about to move into a container; `adjoined(spec)` takes an adjacency spec just added as its grid's last rule;
+data: a grid's settings taken, a shape placed, moved or leaving its cell, a rule held, met, ignored or dropped, the
+extents changed. A grid is a sequence of cells, placed in order, by its settings as `Logical.settings` gives them:
+along a row, `span` cells, then the next row down, where it grows rows; down a column, then the next column right, where
+it grows columns. `configured(grid)` takes a grid's settings, after a mutation that made the grid or changed them,
+rearranging its cells where its span or axis changed; `defaulted(diagram)` configures each grid whose settings the
+diagram's changed defaults changed; `added(child)` places a child a grid has just gained, a container's or the
+diagram's, in the next cell, taking the grid's settings first where it is new; `removing(child)` closes the gap a child
+about to leave its grid leaves; `adjoined(spec)` takes an adjacency spec just added as its grid's last rule;
 `unjoining(spec)` drops the rule of a spec about to be removed, reverting its `to_shape` to its original insertion
 position where the rule held.
 
@@ -37,7 +37,7 @@ where it does not, met by one change of the sequence that breaks none of the kep
 its `to_shape` beside its `from_shape` along its rotation, quantized to the nearest quarter turn, into a cell of its own
 or into the cell on that side a rule along the same side placed, which they then share; and where no such change can,
 ignored, the later of the incompatible rules, until a mutation lets it be met, in its turn. The shapes a change moves
-are touched in turn, for the rules after it.
+are touched in turn, for the rules after it. A grid rearranged by new settings touches every shape it holds.
 """
 
 from __future__ import annotations
@@ -48,16 +48,14 @@ from mbse.Schemas.Framework import Proxies
 
 from . import Logical
 
-__all__ = ["install", "layout", "rotate", "added", "removing", "adjoined", "unjoining", "ignored", "cell_of",
-           "container_of", "quarter"]
+__all__ = ["install", "configured", "defaulted", "added", "removing", "adjoined", "unjoining", "ignored", "cell_of",
+           "quarter"]
 
-AXES = ("rows", "columns")
 QUARTERS = ("north", "east", "south", "west")
 STEPS = {("rows", "east"): "next", ("rows", "west"): "prev", ("rows", "south"): "down", ("rows", "north"): "up",
          ("columns", "south"): "next", ("columns", "north"): "prev", ("columns", "east"): "down",
          ("columns", "west"): "up"}
 OFFSETS = {"north": (-1, 0), "east": (0, 1), "south": (1, 0), "west": (0, -1)}
-SPAN, GROWS = 3, "rows"  # an implied container's, where its diagram sets none
 
 
 def install(txn: Any) -> Any:
@@ -70,37 +68,17 @@ def install(txn: Any) -> Any:
 
     return txn.uid("mbse.Diagrams.Container/1").mutations([lambda mu: mu.upsert(lambda u: u.exists([lambda p: p
         .symbols({
-            "Owns": S.OfRelation, "OfRotation": S.OfObject, "OfDiagram": S.OfObject, "OfShape": S.OfObject,
-            "OfAdjacency": S.OfObject, "OfGrid": S.OfObject, "Layout": S.OfRelation, "OfCell": S.OfObject,
-            "Cells": S.OfRelation, "Holds": S.OfRelation, "OfRule": S.OfObject, "Rules": S.OfRelation,
-            "Enforces": S.OfRelation,
+            "Owns": S.OfRelation, "OfShape": S.OfObject, "OfAdjacency": S.OfObject, "OfGrid": S.OfObject,
+            "OfCell": S.OfObject, "HasCells": S.OfRelation, "Holds": S.OfRelation, "OfRule": S.OfObject,
+            "Rules": S.OfRelation, "Enforces": S.OfRelation,
         })
         .spec([
             lambda _: _.Owns.name("Logical.Owns"),  # found by their names
-            lambda _: _.OfRotation.name("Logical.OfRotation"),
-            lambda _: _.Layout.name("Container.Layout").links([
-                lambda t: t.name("container"),
-                lambda t: t.name("grid"),
-            ]).uniques([["container"], ["grid"]]),  # one grid per container
-            lambda _: _.OfGrid.name("Container.OfGrid").ref(True).properties({
-                "grows": S.OfStr,  # the elastic axis: "rows" or "columns"
-                "span": S.OfInt,  # the cells along the other axis
-                "rows": S.OfInt,  # the extents: the cells along each axis the children occupy
-                "columns": S.OfInt,
-                "inserted": S.OfInt,  # the children placed so far: the next one's order
-                "ruled": S.OfInt,  # the rules taken so far: the next one's name
-                "cell_rotation": _.OfRotation,  # each cell's, from the container's compass
-            }).adjacencies([
-                lambda t: owned(t, _),
-                lambda t: t.name("owns").relation([_.Owns]).me("owner"),  # its cells and rules
-                lambda t: t.name("container").relation([_.Layout]).me("grid"),
-                lambda t: t.name("cells").relation([_.Cells]).me("grid"),
-                lambda t: t.name("rules").relation([_.Rules]).me("grid"),
-            ]),
-            lambda _: _.Cells.name("Container.Cells").links([
+            lambda _: _.HasCells.name("Container.HasCells").links([
                 lambda t: t.name("grid"),
                 lambda t: t.name("cell"),
-            ]).uniques([["grid"]]),  # a cell of one grid
+            ]).properties({"row": S.OfInt, "column": S.OfInt})
+            .uniques([["grid", "row", "column"], ["cell"]]),  # a cell of one grid, one cell at each coordinate
             lambda _: _.OfCell.name("Container.OfCell").ref(True).properties({
                 "row": S.OfInt,
                 "column": S.OfInt,
@@ -108,8 +86,7 @@ def install(txn: Any) -> Any:
                 "rows": S.OfInt,
                 "columns": S.OfInt,
             }).adjacencies([
-                lambda t: owned(t, _),
-                lambda t: t.name("grid").relation([_.Cells]).me("cell"),
+                lambda t: t.name("grid").relation([_.HasCells]).me("cell").owner(True),
                 lambda t: t.name("children").relation([_.Holds]).me("cell"),
             ]),
             lambda _: _.Holds.name("Container.Holds").links([
@@ -129,12 +106,18 @@ def install(txn: Any) -> Any:
                 lambda t: t.name("grid").relation([_.Rules]).me("rule"),
                 lambda t: t.name("spec").relation([_.Enforces]).me("rule"),
             ]),
-            lambda _: _.OfDiagram.name("Logical.OfDiagram").properties({
-                "grid_span": S.OfInt,  # an implied container's span and axis, where layout gives none
-                "grid_grows": S.OfStr,
-            }).adjacencies([lambda t: t.name("grid").relation([_.Layout]).me("container")]),
+            lambda _: _.OfGrid.name("Logical.OfGrid").properties({
+                "rows": S.OfInt,  # the extents: the cells along each axis the children occupy
+                "columns": S.OfInt,
+                "inserted": S.OfInt,  # the children placed so far: the next one's order
+                "ruled": S.OfInt,  # the rules taken so far: the next one's name
+                "arranged_span": S.OfInt,  # the settings its cells are arranged by
+                "arranged_grows": S.OfStr,
+            }).adjacencies([
+                lambda t: t.name("cells").relation([_.HasCells]).me("grid"),
+                lambda t: t.name("rules").relation([_.Rules]).me("grid"),
+            ]),
             lambda _: _.OfShape.name("Logical.OfShape").adjacencies([
-                lambda t: t.name("grid").relation([_.Layout]).me("container"),
                 lambda t: t.name("cell").relation([_.Holds]).me("shape"),
             ]),
             lambda _: _.OfAdjacency.name("Logical.OfAdjacency").adjacencies([
@@ -143,59 +126,58 @@ def install(txn: Any) -> Any:
         ])]))])
 
 
-def layout(container: Any, span: int, grows: str = "rows", cell_rotation: float = 0.0) -> list[dict[str, Any]]:
-    """Gives `container`, a shape or the diagram, which has no children yet, a grid of `span` cells along the axis it
-    does not grow along, `grows`, each cell turned by `cell_rotation` degrees from the container's compass, in place of
-    the implied one its first child would give it. Returns the adjustment: the grid made. Within a transaction."""
-    if grows not in AXES:
-        raise ValueError(f"a grid grows rows or columns, not {grows!r}")
-    if not isinstance(span, int) or isinstance(span, bool) or span < 1:
-        raise ValueError(f"a grid's span is a positive int, not {span!r}")
-    if list(container.grid):
-        raise ValueError("a container has one grid")
-    if _children(container):
-        raise ValueError("a container's grid comes before its children, which reach it as mutations")
-    return _make(container, span, grows, cell_rotation)
+def configured(grid: Any) -> list[dict[str, Any]]:
+    """Takes `grid`'s settings, after a mutation that made it or changed them: where its span or axis changed, its
+    cells are rearranged by them, in the same order, and settle. Returns the adjustments, in order: the settings taken
+    first. Within a transaction of its own, after the mutation."""
+    adjustments = _ready(grid)
+    if adjustments:
+        return adjustments
+    span, grows = Logical.settings(grid)
+    adjustments = [_taken(grid)]
+    was = (grid.arranged_span.get(), grid.arranged_grows.get())
+    if was == (span, grows):
+        return adjustments
+    sequence = _sequence(grid)
+    moves = _moves(sequence, sequence, span, grows, was)
+    touched = {id(s) for cell in sequence for s, _ in cell.held}
+    return _settle(grid, sequence, _rules(grid), touched, adjustments + moves)
 
 
-def rotate(container: Any, degrees: float) -> list[dict[str, Any]]:
-    """Turns the cells of `container`'s grid by `degrees` from its compass, and with them the compasses of the shapes
-    they hold. Returns the adjustment. Within a transaction."""
-    grid = _grid(container)
-    Proxies.store_of(grid).Container.OfGrid(grid, lambda g: g.cell_rotation(lambda r: r.degrees(degrees)))
-    return [{"kind": "rotate", "degrees": degrees}]
+def defaulted(diagram: Any) -> list[dict[str, Any]]:
+    """Configures each grid of `diagram` whose span or axis changed with the diagram's defaults, after a mutation that
+    changed them: the diagram's grid, then each of its shapes', in the order they joined it. Returns the adjustments,
+    in order. Within a transaction of its own, after the mutation."""
+    adjustments: list[dict[str, Any]] = []
+    for grid in [Logical.grid_of(diagram), *(Logical.grid_of(e.shape) for e in diagram.shapes)]:
+        if grid is not None and grid.inserted.get() is not None \
+                and Logical.settings(grid) != (grid.arranged_span.get(), grid.arranged_grows.get()):
+            adjustments += configured(grid)
+    return adjustments
 
 
 def added(child: Any) -> list[dict[str, Any]]:
-    """Places `child`, which its container has just gained, in the next cell of its container's grid, making the
-    implied grid where the container has none yet, then settles. Returns the adjustments, in order. Within a transaction
-    of its own, after the mutation."""
+    """Places `child`, which a grid has just gained, in the grid's next cell, taking the grid's settings first where it
+    is new, then settles. Returns the adjustments, in order. Within a transaction of its own, after the mutation."""
     if list(child.cell):
         raise ValueError("a child is placed once: it is in a cell already")
-    container = container_of(child)
-    adjustments: list[dict[str, Any]] = []
-    if not list(container.grid):
-        diagram = _diagram_of(container)
-        span = diagram.grid_span.get() if diagram is not None else None
-        grows = diagram.grid_grows.get() if diagram is not None else None
-        adjustments += _make(container, span if span is not None else SPAN, grows if grows is not None else GROWS,
-                             0.0)
-    grid = _grid(container)
+    grid = _holder(child)
+    adjustments = _ready(grid)
+    span, grows = Logical.settings(grid)
     order = grid.inserted.get()
-    Proxies.store_of(grid).Container.OfGrid(grid, lambda g: g.inserted(order + 1))
+    Proxies.store_of(grid).Logical.OfGrid(grid, lambda g: g.inserted(order + 1))
     before = _sequence(grid)
-    adjustments.append({"kind": "place", "shape": child, "order": order,
-                        "to": _position(len(before), grid.span.get(), grid.grows.get())})
+    adjustments.append({"kind": "place", "shape": child, "order": order, "to": _position(len(before), span, grows)})
     return _settle(grid, [*before, _Cell([(child, order)])], _rules(grid), {id(child)}, adjustments)
 
 
 def removing(child: Any) -> list[dict[str, Any]]:
-    """Anticipates `child` leaving its container, or the diagram's top level, before the mutation that moves it, which
-    removes the specs from and to it: it leaves its cell, the children after it move back one, a cell it leaves
-    empty goes, and its rules are dropped; then settles. The mutation deletes nothing: `added` then places it where
-    it went. Returns the adjustments, in order. Within a transaction of its own, before the removal."""
-    grid = _grid(container_of(child))
-    span, grows = grid.span.get(), grid.grows.get()
+    """Anticipates `child` leaving its grid, before the mutation that moves it, which removes the specs from and to it:
+    it leaves its cell, the children after it move back one, a cell it leaves empty goes, and its rules are dropped;
+    then settles. The mutation deletes nothing: `added` then places it where it went. Returns the adjustments, in
+    order. Within a transaction of its own, before the removal."""
+    grid = _holder(child)
+    span, grows = Logical.settings(grid)
     before = _sequence(grid)
     (i,) = [k for k, cell in enumerate(before) if any(s is child for s, _ in cell.held)]
     after, _ = _without(before, child)
@@ -217,7 +199,7 @@ def adjoined(spec: Any) -> list[dict[str, Any]]:
     without breaking an earlier one. Within a transaction of its own, after the mutation."""
     rule = _Rule(None, spec, False)
     rule.new = True
-    grid = _grid(container_of(rule.from_shape))
+    grid = _holder(rule.from_shape)
     return _settle(grid, _sequence(grid), [*_rules(grid), rule], set(), [])
 
 
@@ -226,7 +208,7 @@ def unjoining(spec: Any) -> list[dict[str, Any]]:
     reverting its `to_shape` to its original insertion position where the rule held, before the first cell whose first
     shape was placed after it; then settles. Returns the adjustments, in order. Within a transaction of its own, before
     the removal."""
-    grid = _grid(container_of(_from_shape(spec)))
+    grid = _holder(_from_shape(spec))
     rules = _rules(grid)
     (rule,) = [r for r in rules if r.spec is spec]
     rule.dropped = True
@@ -236,14 +218,15 @@ def unjoining(spec: Any) -> list[dict[str, Any]]:
         sequence, held = _without(sequence, rule.to_shape)
         at = next((k for k, cell in enumerate(sequence) if cell.held[0][1] > held[1]), len(sequence))
         sequence.insert(at, _Cell([held]))
-    moves = _moves(before, sequence, grid.span.get(), grid.grows.get())
+    moves = _moves(before, sequence, *Logical.settings(grid))
     return _settle(grid, sequence, rules, {id(m["shape"]) for m in moves}, adjustments + moves)
 
 
 def ignored(container: Any) -> list[tuple[Any, Any, float]]:
     """The rules of `container`'s grid that are ignored, in the order they reached it: each one's `from_shape`,
     `to_shape` and degrees."""
-    return [(r.from_shape, r.to_shape, r.degrees) for r in _rules(_grid(container)) if r.ignored]
+    grid = Logical.grid_of(container)
+    return [] if grid is None else [(r.from_shape, r.to_shape, r.degrees) for r in _rules(grid) if r.ignored]
 
 
 def cell_of(shape: Any) -> tuple[int, int] | None:
@@ -251,14 +234,6 @@ def cell_of(shape: Any) -> tuple[int, int] | None:
     for entry in shape.cell:
         return entry.cell.row.get(), entry.cell.column.get()
     return None
-
-
-def container_of(child: Any) -> Any:
-    """The container a shape is in: the shape that contains it, or, for a top-level shape, its diagram."""
-    for entry in child.container:
-        return entry.container
-    (entry,) = child.diagram
-    return entry.diagram
 
 
 def quarter(degrees: float) -> str:
@@ -295,40 +270,34 @@ def _from_shape(spec: Any) -> Any:
     return shape
 
 
-def _children(container: Any) -> list[Any]:
-    """A shape's children; or the diagram's top-level shapes, its members with no container."""
-    if "children" in container.as_schema().adjacencies:
-        return [e.child for e in container.children]
-    return [e.shape for e in container.shapes if not list(e.shape.container)]
+def _holder(child: Any) -> Any:
+    """The grid that holds `child`."""
+    grid = Logical.holding(child)
+    if grid is None:
+        raise ValueError("a shape no grid holds has no cell: its container, or its diagram, has no grid")
+    return grid
 
 
-def _diagram_of(container: Any) -> Any:
-    """The diagram `container` is in, or is."""
-    while container.as_schema().name != "Logical.OfDiagram":
-        container = Logical.owner_of(container)
-    return container
+def _ready(grid: Any) -> list[dict[str, Any]]:
+    """Takes a new grid's settings, its cells none: the adjustment; none for a grid that has them."""
+    if grid.inserted.get() is not None:
+        return []
+    span, grows = Logical.settings(grid)
+    Proxies.store_of(grid).Logical.OfGrid(grid, lambda g: g
+        .rows(0).columns(0).inserted(0).ruled(0).arranged_span(span).arranged_grows(grows))
+    return [_taken(grid)]
 
 
-def _make(container: Any, span: int, grows: str, cell_rotation: float) -> list[dict[str, Any]]:
-    """Makes `container`'s grid: the adjustment."""
-    Proxies.store_of(container).Container.OfGrid(lambda g: g
-        .owner(lambda a: a.insert(lambda e: e.name("grid").owner(container)))
-        .container(lambda a: a.insert(lambda e: e.container(container)))
-        .grows(grows).span(span).rows(0).columns(0).inserted(0).ruled(0)
-        .cell_rotation(lambda r: r.degrees(cell_rotation)))
-    return [{"kind": "grid", "container": container, "span": span, "grows": grows, "cell_rotation": cell_rotation}]
-
-
-def _grid(container: Any) -> Any:
-    entries = list(container.grid)
-    if not entries:
-        raise ValueError("a container without a grid has no container layout: it has no children yet")
-    return entries[0].grid
+def _taken(grid: Any) -> dict[str, Any]:
+    """The adjustment that takes a grid's settings."""
+    span, grows = Logical.settings(grid)
+    return {"kind": "grid", "container": Logical.owner_of(grid), "span": span, "grows": grows,
+            "cell_rotation": grid.cell_rotation.degrees.get() or 0.0}
 
 
 def _sequence(grid: Any) -> list[_Cell]:
-    """The grid's cells, in the order they are placed."""
-    span, grows = grid.span.get(), grid.grows.get()
+    """The grid's cells, in the order they are placed, by the settings they are arranged by."""
+    span, grows = grid.arranged_span.get(), grid.arranged_grows.get()
     keyed = {(e.cell.row.get(), e.cell.column.get()): e.cell for e in grid.cells}
     cells = [keyed[_position(i, span, grows)] for i in range(len(keyed))]
     return [_Cell([(e.shape, e.order.get()) for e in cell.children], cell.grows.get()) for cell in cells]
@@ -402,7 +371,7 @@ def _settle(grid: Any, sequence: list[_Cell], rules: list[_Rule], touched: set[i
     where it holds, met by one change that breaks no earlier kept rule where it does not, and ignored where none can;
     the shapes a change moves are touched in turn, for the rules after it. A dropped rule is not checked. Writes the
     sequence, the rules and the extents."""
-    span, grows = grid.span.get(), grid.grows.get()
+    span, grows = Logical.settings(grid)
     extents = (grid.rows.get(), grid.columns.get())
     touched = set(touched)
     kept: list[_Rule] = []
@@ -438,10 +407,11 @@ def _settle(grid: Any, sequence: list[_Cell], rules: list[_Rule], touched: set[i
     return adjustments
 
 
-def _moves(before: list[_Cell], after: list[_Cell], span: int, grows: str) -> list[dict[str, Any]]:
-    """The moves that take the shapes of `before` to their cells in `after`, in the order of `after`: each shape in both
-    whose cell changed."""
-    was = {id(s): _position(i, span, grows) for i, cell in enumerate(before) for s, _ in cell.held}
+def _moves(before: list[_Cell], after: list[_Cell], span: int, grows: str,
+           arranged: tuple[int, str] | None = None) -> list[dict[str, Any]]:
+    """The moves that take the shapes of `before`, arranged by `arranged` or else by `span` and `grows`, to their cells
+    in `after`, in the order of `after`: each shape in both whose cell changed."""
+    was = {id(s): _position(i, *(arranged or (span, grows))) for i, cell in enumerate(before) for s, _ in cell.held}
     return [{"kind": "move", "shape": s, "from": was[id(s)], "to": _position(i, span, grows)}
             for i, cell in enumerate(after) for s, _ in cell.held
             if id(s) in was and was[id(s)] != _position(i, span, grows)]
@@ -462,7 +432,7 @@ def _record(grid: Any, rules: list[_Rule]) -> None:
                                    .owner(lambda a: a.clear()))
         elif rule.rule is None:
             name = str(grid.ruled.get())
-            store.Container.OfGrid(grid, lambda g: g.ruled(grid.ruled.get() + 1))
+            store.Logical.OfGrid(grid, lambda g: g.ruled(grid.ruled.get() + 1))
             store.Container.OfRule(lambda r, rule=rule, name=name: r
                 .owner(lambda a: a.insert(lambda e: e.name(name).owner(grid)))
                 .grid(lambda a: a.insert(lambda e: e.grid(grid)))
@@ -473,12 +443,15 @@ def _record(grid: Any, rules: list[_Rule]) -> None:
 
 
 def _arrange(grid: Any, sequence: list[_Cell]) -> None:
-    """Makes the grid hold `sequence`, writing only the cells that change, and its extents those of the sequence."""
+    """Makes the grid hold `sequence`, by its settings, writing only the cells that change, and its extents those of
+    the sequence; a cell no longer at a place the sequence fills goes."""
     store = Proxies.store_of(grid)
-    span, grows = grid.span.get(), grid.grows.get()
+    span, grows = Logical.settings(grid)
     keyed = {(e.cell.row.get(), e.cell.column.get()): e.cell for e in grid.cells}
+    filled = set()
     for i, cell in enumerate(sequence):
         row, column = _position(i, span, grows)
+        filled.add((row, column))
         axis = cell.grows if len(cell.held) > 1 else None
         rows, columns = (len(cell.held), 1) if axis == "rows" else (1, len(cell.held))
         existing = keyed.get((row, column))
@@ -496,16 +469,14 @@ def _arrange(grid: Any, sequence: list[_Cell]) -> None:
 
         if existing is None:
             store.Container.OfCell(lambda c, row=row, column=column, fill=fill: fill(c
-                .owner(lambda a: a.insert(lambda e: e.name(f"{row},{column}").owner(grid)))
-                .grid(lambda a: a.insert(lambda e: e.grid(grid)))
+                .grid(lambda a: a.insert(lambda e: e.grid(grid).row(row).column(column)))
                 .row(row).column(column)))
         else:
             store.Container.OfCell(existing, fill)
-    for i in range(len(sequence), len(keyed)):
-        gone = keyed[_position(i, span, grows)]  # its own entries cleared first: it goes only when the transaction ends
-        store.Container.OfCell(gone, lambda c: c.children(lambda a: a.clear()).grid(lambda a: a.clear())
-                               .owner(lambda a: a.clear()))
+    for place, gone in keyed.items():  # its own entries cleared first: it goes only when the transaction ends
+        if place not in filled:
+            store.Container.OfCell(gone, lambda c: c.children(lambda a: a.clear()).grid(lambda a: a.clear()))
     count = len(sequence)
     along, across = -(-count // span), min(count, span)
     rows, columns = (along, across) if grows == "rows" else (across, along)
-    store.Container.OfGrid(grid, lambda g: g.rows(rows).columns(columns))
+    store.Logical.OfGrid(grid, lambda g: g.rows(rows).columns(columns).arranged_span(span).arranged_grows(grows))

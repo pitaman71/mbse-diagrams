@@ -5,14 +5,22 @@ Normal schemas, installed before use: `store.transaction(Logical.install)`. Each
 one relation, `Logical.Owns`, keyed by a `name` unique among its owner's: a diagram by the singleton `Logical.Diagrams`;
 every shape by its diagram, contained or not
 ([CAP-264: containment separate from ownership](mbse:mbse-basis/docs/capabilities/README.md#CAP-264)); a shape's
-points, vectors, segments and the adjacency specs from it by the shape. `Container` and `Physical` own theirs through it
-too. What part each plays is a relation of its own, which owns nothing:
+points, vectors, segments, the adjacency specs from it and its grid by the shape; the diagram's grid by the diagram.
+`Container` and `Physical` own theirs through it too, but for a grid's cells. What part each plays is a relation of its
+own, which owns nothing:
 
 - a diagram is in the directory (`Logical.InDiagrams`), and every shape a member of its diagram (`Logical.InDiagram`),
   contained or not: containment is not membership;
-- a child shape is in its container, one each (`Logical.Containment`), in the order it was added; a shape with none is
-  at its diagram's top level, and moving a shape into or out of a container changes this entry alone, so that the
-  shape keeps its identity and what it owns;
+- a container, a shape or the diagram, owns at most one grid, a `Logical.OfGrid`, as `grid`, which holds its children,
+  each in one grid (`Logical.Containment`), in the order it was added: containment is a path through ownership, so that
+  a child can be contained only by a grid, and a container has only one. The diagram's grid holds every member of the
+  diagram that no shape's grid holds, its top-level shapes, with no entry of its own: removing a shape's containment
+  entry moves it to the top level, deleting nothing. Moving a shape into or out of a container changes this entry
+  alone, so that the shape keeps its identity and what it owns. A grid's settings are its own properties: `span`, the cells it
+  holds along the axis it does not grow along, a positive int; `grows`, that axis, `"rows"` or `"columns"`; and
+  `cell_rotation`, a `Logical.OfRotation`, its cells' turn from its container's compass. Where a grid sets none, or
+  one outside those values, its diagram's `grid_span` and `grid_grows` apply, then 3 and `"rows"`
+  ([the grid in the logical layout](mbse:mbse-basis/docs/capabilities/README.md#CAP-280));
 - a shape has one `origin` point (`Logical.Origin`), and `borders` and `extents` points (`Logical.Borders`,
   `Logical.Extents`), each connected to the origin by a vector;
 - a `Logical.OfVector` runs from its `start` point to its `end` point (`Logical.VectorStart`, `Logical.VectorEnd`),
@@ -24,16 +32,19 @@ too. What part each plays is a relation of its own, which owns nothing:
 
 `compass(x)` resolves the logical compass of a point or a shape, as degrees clockwise from the diagram's north, by the
 rules of [the diagrams proposal](mbse:mbse-basis/proposals/DIAGRAMS.md): a shape's is its origin's; an origin's its
-enclosing cell's, which is its container's turned by the rotation of its container's cells, where `Container` gives it
-a cell, and so on to the diagram, whose compass is north; a border or extent point's its origin's, turned by the
-rotation of the vector from its origin.
+enclosing cell's, which is its container's turned by the rotation of the cells of the grid that holds it, and so on to
+the diagram, whose compass is north; a border or extent point's its origin's, turned by the rotation of the vector from
+its origin.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["install", "owner_of", "name_of", "ends", "compass"]
+__all__ = ["install", "owner_of", "name_of", "grid_of", "container_of", "holding", "settings", "ends", "compass"]
+
+SPAN, GROWS = 3, "rows"  # a grid's, where neither it nor its diagram sets one
+AXES = ("rows", "columns")
 
 
 def install(txn: Any) -> Any:
@@ -56,7 +67,8 @@ def install(txn: Any) -> Any:
     return txn.uid("mbse.Diagrams.Logical/1").mutations([lambda mu: mu.upsert(lambda u: u.exists([lambda p: p
         .symbols({
             "Owns": S.OfRelation, "OfRotation": S.OfObject, "Diagrams": S.OfObject, "InDiagrams": S.OfRelation,
-            "OfDiagram": S.OfObject, "InDiagram": S.OfRelation, "OfShape": S.OfObject, "Containment": S.OfRelation,
+            "OfDiagram": S.OfObject, "InDiagram": S.OfRelation, "OfShape": S.OfObject, "OfGrid": S.OfObject,
+            "Containment": S.OfRelation,
             "OfPoint": S.OfObject, "Origin": S.OfRelation, "Borders": S.OfRelation, "Extents": S.OfRelation,
             "OfVector": S.OfObject, "VectorStart": S.OfRelation, "VectorEnd": S.OfRelation, "OfSegment": S.OfObject,
             "SegmentEnds": S.OfRelation, "OfAdjacency": S.OfObject, "AdjacencyFrom": S.OfRelation,
@@ -75,7 +87,10 @@ def install(txn: Any) -> Any:
                 lambda t: t.name("diagrams").relation([_.InDiagrams]).me("directory"),
             ]),
             role("Logical.InDiagrams", "directory", "diagram", uniques=[["directory"]]),
-            lambda _: _.OfDiagram.name("Logical.OfDiagram").ref(True).adjacencies([
+            lambda _: _.OfDiagram.name("Logical.OfDiagram").ref(True).properties({
+                "grid_span": S.OfInt,  # a grid's span and axis, where it sets none
+                "grid_grows": S.OfStr,
+            }).adjacencies([
                 lambda t: owned(t, _),
                 lambda t: owns(t, _),
                 lambda t: t.name("directory").relation([_.InDiagrams]).me("diagram"),
@@ -86,15 +101,23 @@ def install(txn: Any) -> Any:
                 lambda t: owned(t, _),
                 lambda t: owns(t, _),
                 lambda t: t.name("diagram").relation([_.InDiagram]).me("shape"),
-                lambda t: t.name("container").relation([_.Containment]).me("child"),
-                lambda t: t.name("children").relation([_.Containment]).me("container"),
+                lambda t: t.name("container").relation([_.Containment]).me("child"),  # the grid that holds it
                 lambda t: t.name("origin").relation([_.Origin]).me("shape"),
                 lambda t: t.name("borders").relation([_.Borders]).me("shape"),
                 lambda t: t.name("extents").relation([_.Extents]).me("shape"),
                 lambda t: t.name("adjacent_to").relation([_.AdjacencyFrom]).me("shape"),
                 lambda t: t.name("adjacent_from").relation([_.AdjacencyTo]).me("shape"),
             ]),
-            role("Logical.Containment", "container", "child", uniques=[["container"]]),  # one container per child
+            lambda _: _.OfGrid.name("Logical.OfGrid").ref(True).properties({
+                "span": S.OfInt,  # the cells along the axis it does not grow along: a positive int
+                "grows": S.OfStr,  # the axis it grows along: "rows" or "columns"
+                "cell_rotation": _.OfRotation,  # each cell's, from its container's compass
+            }).adjacencies([
+                lambda t: owned(t, _),  # by its container, as "grid"
+                lambda t: owns(t, _),
+                lambda t: t.name("children").relation([_.Containment]).me("grid"),
+            ]),
+            role("Logical.Containment", "grid", "child", uniques=[["grid"]]),  # one grid per child
             lambda _: _.OfPoint.name("Logical.OfPoint").ref(True).adjacencies([
                 lambda t: owned(t, _),
                 lambda t: t.name("origin_of").relation([_.Origin]).me("point"),
@@ -135,17 +158,58 @@ def install(txn: Any) -> Any:
 
 
 def owner_of(x: Any) -> Any:
-    """What owns `x`, through `Logical.Owns`, or `None` for the directory."""
-    for entry in x.owner:
-        return entry.owner
+    """What owns `x`, through whichever relation its schema marks its owner's, or `None` for the directory."""
+    for adjacency in x.as_schema().adjacencies.values():
+        if adjacency.owner:
+            (link,) = [k for k in adjacency.relation.entry.links if k != adjacency.me]
+            return next((getattr(entry, link) for entry in getattr(x, adjacency.name)), None)
     return None
 
 
 def name_of(x: Any) -> str | None:
-    """`x`'s name among its owner's."""
-    for entry in x.owner:
-        return entry.name.get()
+    """`x`'s name among its owner's, where `Logical.Owns` owns it."""
+    if "owner" in x.as_schema().adjacencies:
+        return next((entry.name.get() for entry in x.owner), None)
     return None
+
+
+def grid_of(container: Any) -> Any:
+    """The grid a container, a shape or the diagram, owns, or `None`."""
+    for entry in container.owns:
+        if entry.name.get() == "grid":
+            return entry.owned
+    return None
+
+
+def container_of(shape: Any) -> Any:
+    """The container a shape is in: the shape whose grid holds it, or the diagram, for a top-level shape; `None` for a
+    shape that is no diagram's member."""
+    for entry in shape.container:
+        return owner_of(entry.grid)
+    for entry in shape.diagram:
+        return entry.diagram
+    return None
+
+
+def holding(shape: Any) -> Any:
+    """The grid that holds a shape: its container's, or the diagram's, for a top-level shape; `None` where that diagram
+    has no grid yet, or the shape is no diagram's member."""
+    for entry in shape.container:
+        return entry.grid
+    for entry in shape.diagram:
+        return grid_of(entry.diagram)
+    return None
+
+
+def settings(grid: Any) -> tuple[int, str]:
+    """A grid's span and axis, as they apply: its own, where valid; else its diagram's; else 3 and `"rows"`."""
+    diagram = owner_of(grid)
+    while diagram.as_schema().name != "Logical.OfDiagram":
+        diagram = owner_of(diagram)
+    span = next((v for v in (grid.span.get(), diagram.grid_span.get())
+                 if isinstance(v, int) and not isinstance(v, bool) and v >= 1), SPAN)
+    grows = next((v for v in (grid.grows.get(), diagram.grid_grows.get()) if v in AXES), GROWS)
+    return span, grows
 
 
 def ends(vector: Any) -> tuple[Any, Any]:
@@ -179,18 +243,17 @@ def compass(x: Any) -> float:
 
 
 def _enclosing(shape: Any) -> float:
-    """The compass of the cell that encloses `shape`'s origin: its container's, turned by the rotation of its
-    container's cells, where container layout gives it a cell, and so on to the diagram, whose compass is north."""
+    """The compass of the cell that encloses `shape`'s origin: its container's, turned by the rotation of the cells of
+    the grid that holds it, and so on to the diagram, whose compass is north."""
     turn = 0.0
     while True:
-        if "cell" in shape.as_schema().adjacencies:
-            for entry in shape.cell:
-                ((place,),) = [list(entry.cell.grid)]
-                turn += place.grid.cell_rotation.degrees.get()
-        containers = [e.container for e in shape.container]
-        if not containers:
+        grid = holding(shape)
+        if grid is None:
             return turn % 360.0
-        shape = containers[0]
+        turn += grid.cell_rotation.degrees.get() or 0.0
+        shape = owner_of(grid)
+        if shape.as_schema().name == "Logical.OfDiagram":
+            return turn % 360.0
 
 
 def _origin(shape: Any) -> Any:
